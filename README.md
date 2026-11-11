@@ -42,6 +42,9 @@ The Python provenance contract is copied from InfinityDB's current
 is established against the consuming InfinityDB version rather than
 requiring an `infinity_db` runtime import.
 
-This standalone export is staged by the original InfinityDB repository's
-P5.4 extraction tool; create a dedicated Git repository only after the
-producer tests and consumer conformance checks are green.
+This project was extracted from the InfinityDB Wiki/Human Sphere downloader
+under restructuring phase P5.4. The standalone test suite and cross-platform
+GitHub Actions verify the packaged acquisition behavior. InfinityDB reads the
+resulting archive and manifest offline; it does not import or install this
+package for ordinary builds or serving. The original in-tree downloader remains
+until its separate consumer/documentation cutover is complete.
