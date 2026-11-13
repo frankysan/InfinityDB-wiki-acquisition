@@ -37,6 +37,15 @@ manifest is informational. InfinityDB's snapshot-provenance reader verifies
 the pair offline. Source ZIP members remain source evidence, not
 authoritative current gameplay rules.
 
+Manifest publication now stages a new canonical JSON document exclusively
+and installs it with a same-directory no-replace hard link. An existing
+manifest is accepted only if its bytes are identical; different provenance,
+symlink targets or stale `.json.tmp` staging fail instead of overwriting
+another crawl's evidence. Inspect interrupted staging before cleanup and
+use a filesystem supporting hard links. Source archive format, site and
+language selection, legacy CLI destinations and resume-work behavior are
+unchanged.
+
 The Python provenance contract is copied from InfinityDB's current
 `snapshot_provenance` implementation at extraction time, so conformance
 is established against the consuming InfinityDB version rather than

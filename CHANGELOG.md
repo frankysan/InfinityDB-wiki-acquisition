@@ -42,6 +42,14 @@ from the downloader and shared archive/provenance Git history and the
   `snapshot.contentSha256` offline; the producer-relative path in the manifest is
   informational.
 
+### Fixed
+
+- **Acquisition:** Prevented concurrent Wiki/Human Sphere acquisitions from
+  clobbering a previously published v3 snapshot manifest or another run's
+  `.json.tmp` staging. Exact-byte identical manifest reruns remain valid,
+  while conflicting identities and symlink outputs are rejected. The
+  site/language/archive format and legacy output locations are unchanged.
+
 ### Upgrade notes
 
 - **Acquisition:** Replace the former InfinityDB invocation
