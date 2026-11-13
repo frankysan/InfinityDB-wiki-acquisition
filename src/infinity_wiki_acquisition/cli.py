@@ -1403,6 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
             document_count=len(files),
             project_root=Path.cwd(),
             language=args.language,
+            require_new=True,
         )
     except (OSError, ValueError) as exc:
         if manifest is not None:

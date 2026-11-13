@@ -5,7 +5,54 @@ from datetime import datetime
 from pathlib import Path, PureWindowsPath
 from typing import Any
 
+import pytest
+
 from infinity_wiki_acquisition import cli as module
+
+
+@pytest.mark.parametrize("collision", ["identical-manifest", "different-manifest", "archive"])
+def test_manifest_race_preserves_other_crawl_output(tmp_path, monkeypatch, collision):
+    from infinity_wiki_acquisition import snapshot_provenance as provenance
+
+    def download(_url, staging, **_kwargs):
+        page = staging / "index.html"
+        page.write_text("<html></html>", encoding="utf-8")
+        return module.WikiDownloadResult(files=(page,), failures=())
+
+    link = provenance.os.link
+    winner = b""
+    target = None
+
+    def competing_link(source, destination):
+        nonlocal winner, target
+        target = destination
+        winner = source.read_bytes() if collision == "identical-manifest" else b"other crawl\n"
+        destination.write_bytes(winner)
+        link(source, destination)
+
+    monkeypatch.setattr(module, "download_wiki", download)
+    if collision == "archive":
+        original_zip = provenance.zipfile.ZipFile
+
+        def competing_zip(path, mode="r", **kwargs):
+            nonlocal target, winner
+            if mode == "x":
+                target = Path(path)
+                winner = b"other crawl's source ZIP"
+                target.write_bytes(winner)
+            return original_zip(path, mode, **kwargs)
+
+        monkeypatch.setattr(provenance.zipfile, "ZipFile", competing_zip)
+    else:
+        monkeypatch.setattr(provenance.os, "link", competing_link)
+    assert module.main([
+        "--root", str(tmp_path / "wiki"), "--work-root", str(tmp_path / "work"),
+        "--manifest-dir", str(tmp_path / "manifests"),
+    ]) == 1
+    assert target is not None and target.read_bytes() == winner
+    assert list((tmp_path / "wiki").glob("*.zip")) == ([target] if collision == "archive" else [])
+    assert not list((tmp_path / "manifests").glob("*.tmp"))
+    assert list((tmp_path / "work").glob("WIKI-en *.work"))
 
 
 def test_write_bytes_retries_transient_windows_replace_lock(

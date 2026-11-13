@@ -46,6 +46,13 @@ use a filesystem supporting hard links. Source archive format, site and
 language selection, legacy CLI destinations and resume-work behavior are
 unchanged.
 
+Each acquisition requires a newly created manifest, even if a competing crawl
+publishes identical bytes, so rollback cannot delete another run's evidence.
+Direct `write_snapshot_manifest` calls remain idempotent by default. Equality
+uses exact UTF-8 bytes, including line endings. Copying an archive to another
+local layout does not require rewriting its manifest: the consumer explicitly
+selects the archive and never resolves the producer's recorded path.
+
 The Python provenance contract is copied from InfinityDB's current
 `snapshot_provenance` implementation at extraction time, so conformance
 is established against the consuming InfinityDB version rather than

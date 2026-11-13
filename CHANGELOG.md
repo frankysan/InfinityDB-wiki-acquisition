@@ -49,6 +49,9 @@ from the downloader and shared archive/provenance Git history and the
   `.json.tmp` staging. Exact-byte identical manifest reruns remain valid,
   while conflicting identities and symlink outputs are rejected. The
   site/language/archive format and legacy output locations are unchanged.
+- **Acquisition:** Protected a competing crawl's identical manifest from
+  acquisition rollback by requiring newly created provenance. Direct manifest
+  writes remain idempotent, with byte-exact comparison including line endings.
 
 ### Upgrade notes
 
