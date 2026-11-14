@@ -21,6 +21,15 @@ infinity-wiki-snapshot --site infinity-wiki --language es
 infinity-wiki-snapshot --site human-sphere --language en
 ```
 
+The default ZIP directory is `local/data/wiki/`, the matching manifest
+directory is `local/data/manifests/snapshots/`, and incomplete crawl work
+is kept under `local/work/wiki/`, relative to the working directory.
+The existing `--root`, `--work-root` and `--manifest-dir` options still
+accept `data/wiki`, `data/work/wiki` and `data/manifests/snapshots` respectively.
+Paths in the producer checkout
+are not automatically available in InfinityDB; transfer selected ZIP/manifest
+pairs without rewriting their provenance.
+
 `--include-history` additionally archives MediaWiki revisions; `--resume-work`
 uses a preserved incomplete crawl. Partial/failed crawls never publish a ZIP
 or manifest. Archive acquisition is optional and never runs during an

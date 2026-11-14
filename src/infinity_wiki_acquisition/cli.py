@@ -1250,16 +1250,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path("data/wiki"),
-        help="Directory used to store timestamped wiki ZIP snapshots (default: data/wiki)",
+        default=Path("local/data/wiki"),
+        help="Directory used to store timestamped wiki ZIP snapshots (default: local/data/wiki)",
     )
     parser.add_argument(
         "--work-root",
         type=Path,
-        default=Path("data/work/wiki"),
+        default=Path("local/work/wiki"),
         help=(
             "Directory used for temporary wiki crawl work; incomplete runs are "
-            "preserved here (default: data/work/wiki)"
+            "preserved here (default: local/work/wiki)"
         ),
     )
     parser.add_argument(
@@ -1287,8 +1287,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--manifest-dir",
         type=Path,
-        default=Path("data/manifests/snapshots"),
-        help="Generated snapshot manifest directory (default: data/manifests/snapshots)",
+        default=Path("local/data/manifests/snapshots"),
+        help="Generated snapshot manifest directory (default: local/data/manifests/snapshots)",
     )
     return parser.parse_args(argv)
 

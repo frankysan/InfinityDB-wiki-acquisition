@@ -28,6 +28,9 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Changed
 
+- **Acquisition:** New snapshots now default to `local/data/wiki/`,
+  provenance to `local/data/manifests/snapshots/`, and crawl scratch to
+  `local/work/wiki/`. Explicit legacy destinations remain supported.
 - **Acquisition:** Separated source acquisition from the InfinityDB application.
   The package requires Python 3.11 or newer, uses only the standard library at
   runtime and has no `infinity_db` import dependency. Acquisition remains an

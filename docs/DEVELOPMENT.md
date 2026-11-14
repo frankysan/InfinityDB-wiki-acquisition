@@ -59,13 +59,12 @@ Ubuntu and macOS at Python 3.11. Report any unavailable host or skipped
 coverage instead of claiming hosted or application acceptance.
 
 A networked `infinity-wiki-snapshot` run and `--include-history` selection
-are explicit operator actions. The current relative output and preserved
-resume-work defaults remain supported. Use categorized ignored `local/`
-paths for **new** research, validation, transfer and scratch with site,
-language, acquisition revision/run ID and lifetime in the path. Do not
-implicitly change documented legacy output paths, overwrite prior
-snapshots, or delete incomplete crawl data that remains necessary for
-recovery. Third-party source HTML, images and documents remain outside
+are explicit operator actions. The default relative output now uses
+`local/data/wiki/`, `local/data/manifests/snapshots/` and `local/work/wiki/`;
+legacy output and resume-work locations remain available via explicit CLI
+arguments. Use categorized ignored `local/` paths for new research and
+validation. Do not overwrite prior snapshots or delete incomplete crawl
+data needed for recovery. Third-party source HTML, images and documents remain outside
 the MIT code-license grant and out of Git.
 
 ## Changes and retirement

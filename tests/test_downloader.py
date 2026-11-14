@@ -10,6 +10,20 @@ import pytest
 from infinity_wiki_acquisition import cli as module
 
 
+def test_default_paths_are_local_with_explicit_legacy_compatibility() -> None:
+    options = module.parse_args([])
+    assert options.root == Path("local/data/wiki")
+    assert options.work_root == Path("local/work/wiki")
+    assert options.manifest_dir == Path("local/data/manifests/snapshots")
+    old = module.parse_args([
+        "--root", "data/wiki", "--work-root", "data/work/wiki",
+        "--manifest-dir", "data/manifests/snapshots",
+    ])
+    assert old.root == Path("data/wiki")
+    assert old.work_root == Path("data/work/wiki")
+    assert old.manifest_dir == Path("data/manifests/snapshots")
+
+
 @pytest.mark.parametrize("collision", ["identical-manifest", "different-manifest", "archive"])
 def test_manifest_race_preserves_other_crawl_output(tmp_path, monkeypatch, collision):
     from infinity_wiki_acquisition import snapshot_provenance as provenance
