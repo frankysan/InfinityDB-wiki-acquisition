@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 from datetime import datetime
@@ -573,7 +574,7 @@ def test_human_sphere_srcset_downloads_variants_and_original_upload(
 
 
 def test_human_sphere_wrong_binary_payload_is_failure_not_published(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, capsys,
 ) -> None:
     site = module.HUMAN_SPHERE_SITE
     root = site.root_urls["en"]
@@ -591,8 +592,12 @@ def test_human_sphere_wrong_binary_payload_is_failure_not_published(
         ),
     )
 
-    result = module.download_wiki(root, tmp_path, language="en", site=site)
+    result = module.download_wiki(
+        root, tmp_path, language="en", site=site,
+        progress=module.ConsoleProgressReporter(),
+    )
 
+    assert "Wiki crawl failure 1" in capsys.readouterr().err
     assert len(result.failures) == 1
     assert result.failures[0].url == image
     assert "HTML response" in result.failures[0].error
@@ -710,3 +715,250 @@ def test_human_sphere_nested_pages_use_correct_relative_image_paths() -> None:
     assert 'src="../images/sculpt.png"' in rewritten
     assert 'srcset="../images/sculpt.png 1x, ../images/sculpt_large.png 2x"' in rewritten
     assert 'href="../Starter_Boxes.html"' in rewritten
+
+
+def test_file_namespace_image_titles_are_html_pages_not_binary_assets(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    description = "https://www.human-sphere.com/File:Event_Interplanetary2016.JPG"
+    image = "https://www.human-sphere.com/images/0/01/Event_Interplanetary2016.JPG"
+    page = b'<html><body><h1>File description</h1></body></html>'
+    jpeg = b"\xff\xd8\xff\xe0JPEG test"
+    payloads = {
+        root: (
+            b'<html><body><a href="/File:Event_Interplanetary2016.JPG">Photo</a>'
+            b'<img src="/images/0/01/Event_Interplanetary2016.JPG"></body></html>'
+        ),
+        description: page,
+        image: jpeg,
+    }
+    monkeypatch.setattr(module, "fetch_all_page_titles", lambda **_: ("Main Page",))
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": payloads[url],
+    )
+
+    assert not module.is_asset_url(description)
+    assert not module.is_asset_url(
+        "https://www.human-sphere.com/Image%3AEvent_Interplanetary2016.JPG"
+    )
+    assert module.is_asset_url(image)
+    result = module.download_wiki(root, tmp_path, language="en", site=site)
+
+    assert result.failures == ()
+    assert (tmp_path / "File_Event_Interplanetary2016.JPG.html").read_bytes() == page
+    assert (tmp_path / "images/0/01/Event_Interplanetary2016.JPG").read_bytes() == jpeg
+    mirrored = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert 'href="File_Event_Interplanetary2016.JPG.html"' in mirrored
+    assert 'src="images/0/01/Event_Interplanetary2016.JPG"' in mirrored
+    assert {record.title for record in result.pages} == {
+        "Main_Page",
+        "File:Event_Interplanetary2016.JPG",
+    }
+
+
+def test_human_sphere_unicode_and_ascii_titles_get_distinct_portable_paths() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    ascii_url = "https://www.human-sphere.com/Aibot"
+    unicode_url = "https://www.human-sphere.com/Aib%C5%8Dt"
+    plain = module.local_relative_path(ascii_url, site=site, os_name="Windows")
+    accented = module.local_relative_path(unicode_url, site=site, os_name="Windows")
+
+    assert plain == "Aibot.html"
+    assert re.fullmatch(r"Aibot__u_[0-9a-f]{12}\.html", accented)
+    assert accented == module.local_relative_path(unicode_url, site=site, os_name="Linux")
+    assert accented == module.local_relative_path(
+        "https://www.human-sphere.com/Aibo\u0304t", site=site
+    )
+    assert plain != accented
+    assert module.local_relative_path(
+        "https://www.human-sphere.com/images/Aib%C5%8Dt.jpg",
+        asset=True,
+        site=site,
+    ).startswith("images/Aibot__u_")
+    assert module.local_relative_path(
+        "https://www.human-sphere.com/images/Aib%C5%8Dt.jpg",
+        asset=True,
+        site=site,
+    ).endswith(".jpg")
+
+
+def test_human_sphere_redirect_alias_crawl_preserves_both_source_paths(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    alias = "https://www.human-sphere.com/Aibot"
+    canonical = "https://www.human-sphere.com/Aib%C5%8Dt"
+    alias_body = b'<html><body>Redirected from Aibot</body></html>'
+    canonical_body = b'<html><body>Aibot canonical page</body></html>'
+    paths = {
+        root: (
+            b'<html><a href="/Aibot">Alias</a>'
+            b'<a href="/Aib%C5%8Dt">Canonical</a></html>'
+        ),
+        alias: alias_body,
+        canonical: canonical_body,
+    }
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page", "Aibot", "Aib\u014dt"),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": paths[url],
+    )
+    previous = tmp_path / "Aibot.html"
+    previous.write_bytes(b"previous incomplete run")
+
+    result = module.download_wiki(root, tmp_path, site=site)
+    target = module.local_relative_path(canonical, site=site)
+
+    assert result.failures == ()
+    assert previous.read_bytes() == alias_body
+    assert (tmp_path / target).read_bytes() == canonical_body
+    assert {page.path for page in result.pages} == {
+        "Main_Page.html", "Aibot.html", target,
+    }
+    html = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert 'href="Aibot.html"' in html
+    assert f'href="{target}"' in html
+    archive = module.archive_wiki(
+        list(result.files), tmp_path / "archives", root=tmp_path, site=site
+    )
+    import zipfile
+    with zipfile.ZipFile(archive) as output:
+        assert {name for name in output.namelist()} == {
+            "Main_Page.html", "Aibot.html", target,
+        }
+        assert output.testzip() is None
+        output.extractall(tmp_path / "extracted")
+    assert (tmp_path / "extracted" / target).read_bytes() == canonical_body
+
+
+def test_human_sphere_case_only_titles_have_distinct_portable_paths() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    base = "https://www.human-sphere.com/"
+    conventional = module.local_relative_path(base + "Haetae", site=site)
+    mixed = module.local_relative_path(base + "HaeTae", site=site)
+    all_caps = module.local_relative_path(base + "HAETAE", site=site)
+    lowercase = module.local_relative_path(base + "haetae", site=site)
+
+    assert conventional == "Haetae.html"
+    assert re.fullmatch(r"HaeTae__u_[a-f0-9]{12}\.html", mixed)
+    assert len({path.casefold() for path in (conventional, mixed, all_caps, lowercase)}) == 4
+    assert mixed == module.local_relative_path(
+        base + "HaeTae", site=site, os_name="Linux"
+    )
+    assert module.local_relative_path(
+        base + "File:Event_Interplanetary2016.JPG", site=site
+    ) == "File_Event_Interplanetary2016.JPG.html"
+    # Existing assets should retain their previous paths for efficient resume.
+    assert module.local_relative_path(
+        base + "images/thumb/2/23/1121.jpg", site=site, asset=True
+    ) == "images/thumb/2/23/1121.jpg"
+
+
+def test_human_sphere_case_only_redirects_preserve_both_pages_and_links(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    alias = "https://www.human-sphere.com/Haetae"
+    canonical = "https://www.human-sphere.com/HaeTae"
+    data = {
+        root: (
+            b'<html><a href="/Haetae">Alias</a>'
+            b'<a href="/HaeTae">Canonical</a></html>'
+        ),
+        alias: b'<html><body>Redirect from Haetae</body></html>',
+        canonical: b'<html><body>HaeTae article</body></html>',
+    }
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page", "Haetae", "HaeTae"),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": data[url],
+    )
+
+    # Resume on a work directory containing the previous colliding page.
+    existing = tmp_path / "Haetae.html"
+    existing.write_bytes(b"old page, previously overwritten")
+    result = module.download_wiki(root, tmp_path, site=site)
+    canonical_path = module.local_relative_path(canonical, site=site)
+
+    assert result.failures == ()
+    assert existing.read_bytes() == data[alias]
+    assert (tmp_path / canonical_path).read_bytes() == data[canonical]
+    main = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert 'href="Haetae.html"' in main
+    assert f'href="{canonical_path}"' in main
+    assert {p.path for p in result.pages} == {
+        "Main_Page.html", "Haetae.html", canonical_path,
+    }
+
+    import zipfile
+    output = module.archive_wiki(
+        list(result.files), tmp_path / "archives", root=tmp_path, site=site
+    )
+    with zipfile.ZipFile(output) as archive:
+        assert archive.testzip() is None
+        assert set(archive.namelist()) == {
+            "Main_Page.html", "Haetae.html", canonical_path,
+        }
+        archive.extractall(tmp_path / "extracted")
+    assert (tmp_path / "extracted" / canonical_path).read_bytes() == data[canonical]
+
+
+def test_link_metadata_does_not_turn_canonical_pages_into_assets(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    canonical = "https://www.human-sphere.com/Haetae"
+    css = "https://www.human-sphere.com/load.php?modules=skin"
+    markup = (
+        b'<html><head><link rel="canonical" href="/Haetae">'
+        b'<link rel="stylesheet" href="/load.php?modules=skin">'
+        b'<link rel="license" href="/Copyright"></head><body></body></html>'
+    )
+    parser = module.LinkExtractor()
+    parser.feed(markup.decode("utf-8"))
+    assert ("", False) not in parser.links
+    assert module.WikiLink(value="/Haetae", asset=False) in parser.links
+    assert module.WikiLink(value="/Copyright", asset=False) in parser.links
+    assert module.WikiLink(value="/load.php?modules=skin", asset=True) in parser.links
+
+    payloads = {
+        root: markup,
+        canonical: b"<html><body>Haetae article</body></html>",
+        css: b"body {}",
+        "https://www.human-sphere.com/Copyright": (
+            b"<html><body>License page</body></html>"
+        ),
+    }
+    monkeypatch.setattr(module, "fetch_all_page_titles", lambda **_: ("Main Page",))
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": payloads[url],
+    )
+    result = module.download_wiki(root, tmp_path, site=site)
+
+    assert result.failures == ()
+    assert (tmp_path / "Haetae.html").read_bytes() == payloads[canonical]
+    assert (tmp_path / "Copyright.html").read_bytes() == payloads[
+        "https://www.human-sphere.com/Copyright"
+    ]
+    css_path = module.local_relative_path(css, asset=True, site=site)
+    assert (tmp_path / css_path).read_bytes() == payloads[css]
+    main = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert 'rel="canonical" href="Haetae.html"' in main
+    assert 'rel="stylesheet" href="' in main

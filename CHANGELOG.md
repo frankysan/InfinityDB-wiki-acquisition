@@ -54,11 +54,19 @@ from the downloader and shared archive/provenance Git history and the
   success for missing source files.
 - **Acquisition:** Reject HTML error pages and mismatched common binary file
   signatures instead of archiving corrupted image/document/download assets;
-  resume re-fetches invalid previously staged assets.
+  resume re-fetches invalid previously staged assets. MediaWiki `File:` and
+  `Image:` description pages are now correctly classified as HTML even when
+  their titles end in `.JPG`, `.png` or another image extension. HTML
+  `<link rel="canonical">` and license metadata now resolve as page links
+  rather than causing spurious binary-asset failures.
 - **Acquisition:** Normalize newly mirrored paths independently of the host OS,
   prevent distinct source URLs from silently sharing a local filename, reject
   unsafe ZIP members and file/directory collisions, and protect reserved Windows
-  device names (including names with extensions).
+  device names (including names with extensions). Human Sphere paths containing
+  non-ASCII characters now receive deterministic disambiguation suffixes so
+  names like `Aibot` and `Aibōt` can coexist. Nonstandard ASCII casing on
+  Human Sphere HTML pages likewise gets a stable suffix, so `Haetae` and
+  `HaeTae` remain separate, without renaming already-downloaded assets.
 
 - **Acquisition:** Prevented concurrent Wiki/Human Sphere acquisitions from
   clobbering a previously published v3 snapshot manifest or another run's

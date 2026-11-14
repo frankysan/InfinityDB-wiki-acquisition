@@ -8,6 +8,7 @@ characters on the host OS.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
 import unicodedata
@@ -104,14 +105,56 @@ def sanitize_filename(name: str, *, os_name: str | None = None) -> str:
     return f"{cleaned}{suffix}"
 
 
-def sanitize_relative_path(path: str, *, os_name: str | None = None) -> str:
-    """Normalize a relative path by sanitizing each component."""
+def _nonstandard_page_case(value: str) -> bool:
+    """Whether ASCII title casing could collide with a conventional wiki title.
+
+    Pick one ordinary, capitalized spelling per case-insensitive class; retain
+    its readable name. Other spellings get stable source-identity suffixes.
+    Preserve backend endpoints and file extensions within File: page titles.
+    """
+    title = value[:-5] if value.endswith(".html") else value
+    if title.casefold() in {"index.php", "api.php", "load.php"}:
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9]*", title)
+    if re.search(r"\.(?:jpe?g|png|gif|webp|svg|avif|pdf|zip|rar|tiff?)$", title, re.I):
+        words = words[:-1]
+    return any(word != word[0].upper() + word[1:].lower() for word in words)
+
+
+def sanitize_relative_path(
+    path: str,
+    *,
+    os_name: str | None = None,
+    disambiguate_unicode: bool = False,
+    disambiguate_page_case: bool = False,
+) -> str:
+    """Normalize a relative path without collapsing distinct page identities.
+
+    For Human Sphere, non-ASCII components and noncanonical ASCII page-title
+    capitalization receive a stable digest. The conventional spellings and
+    ordinary asset paths remain unchanged for efficient interrupted resumes.
+    """
     normalized = unquote(path).replace("\\", "/")
     if normalized.startswith("/"):
         normalized = normalized[1:]
     if not normalized:
         return "index.html"
-    parts = [
-        sanitize_path_component(part, os_name=os_name) for part in normalized.split("/") if part
-    ]
+    parts: list[str] = []
+    for part in normalized.split("/"):
+        if not part:
+            continue
+        safe = sanitize_path_component(part, os_name=os_name)
+        if (
+            (disambiguate_unicode and not unicodedata.normalize("NFC", part).isascii())
+            or (disambiguate_page_case and _nonstandard_page_case(part))
+        ):
+            # Transliterated or differently capitalized titles need distinct paths.
+            source = unicodedata.normalize("NFC", part)
+            marker = "__u_" + hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
+            suffix = Path(safe).suffix
+            stem = safe[:-len(suffix)] if suffix else safe
+            # The ZIP contract limits individual portable components to 240 bytes.
+            stem = stem[: 240 - len(marker) - len(suffix)].rstrip(". ")
+            safe = f"{stem}{marker}{suffix}"
+        parts.append(safe)
     return "/".join(parts) if parts else "index.html"

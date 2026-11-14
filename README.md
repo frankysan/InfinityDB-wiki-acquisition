@@ -42,12 +42,23 @@ pages within subdirectories. For Human Sphere, recognized MediaWiki
 when available; a source-side HTTP 404 remains explicitly classified as an
 ignored discovered URL. Asset downloads preserve the response bytes exactly,
 but HTML challenges and invalid signatures for common images, archives and
-documents are rejected instead of being published as binary files. Resuming
-an incomplete crawl re-fetches invalid existing assets.
+documents are rejected instead of being published as binary files. Metadata
+links such as `rel="canonical"` and `rel="license"` remain HTML page links
+rather than being downloaded as assets; stylesheets/preload resources remain
+assets. Resuming an incomplete crawl re-fetches invalid existing assets. MediaWiki `File:` and
+`Image:` URLs are treated as HTML description pages even when their titles
+have image-file extensions; the actual uploads remain binary assets. During a crawl, the first ten
+failures and every hundredth subsequent failure are printed immediately to
+stderr, so operators can diagnose problems without completing the crawl.
 
 New archive member paths are Windows/macOS/Linux-portable regardless of the
-crawl host. Unsafe filenames, normalization collisions, and file/directory
-conflicts fail before publication. Existing ZIPs are immutable and **not**
+crawl host. For Human Sphere, non-ASCII names and HTML page titles with
+nonstandard capitalization receive a stable `__u_<hash>` source-identity
+suffix. This keeps `Aibot` distinct from `Aibōt`, and `Haetae` distinct
+from `HaeTae`, while preserving conventional ASCII page filenames and all
+previously mirrored asset paths for efficient resumes. Other unsafe filenames,
+remaining normalization collisions, and file/directory conflicts fail before
+publication. Existing ZIPs are immutable and **not**
 repaired in place: produce a new snapshot and matching manifest if you need
 the enhanced image coverage or portable member validation.
 

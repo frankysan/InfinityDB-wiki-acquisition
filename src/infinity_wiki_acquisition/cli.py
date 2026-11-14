@@ -217,6 +217,7 @@ class WikiCrawlProgress(NamedTuple):
     queued: int
     url: str
     ignored: int = 0
+    error: str | None = None
 
 
 class WikiHistoryProgress(NamedTuple):
@@ -237,6 +238,19 @@ class ConsoleProgressReporter:
         self._last_length = 0
 
     def __call__(self, progress: WikiCrawlProgress) -> None:
+        if progress.error is not None:
+            # Keep long crawls diagnosable without printing thousands of errors.
+            if progress.failed <= 10 or progress.failed % 100 == 0:
+                if self.stream.isatty() and self._last_length:
+                    print(file=self.stream, flush=True)
+                    self._last_length = 0
+                print(
+                    f"Wiki crawl failure {progress.failed}: "
+                    f"{progress.url}: {progress.error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return
         message = (
             f"Wiki crawl: fetching {progress.attempted} | saved {progress.saved} | "
             f"ignored {progress.ignored} | failed {progress.failed} | "
@@ -310,6 +324,18 @@ class LinkExtractor(HTMLParser):
         self.links: list[WikiLink] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        rel = (attributes.get("rel") or "").casefold().split()
+        # A canonical/license link is a page reference, not a binary download.
+        # Stylesheets and preload hints can point to extensionless assets.
+        linked_resource = tag.lower() == "link" and (
+            "stylesheet" in rel
+            or (
+                "preload" in rel
+                and (attributes.get("as") or "").casefold()
+                in {"style", "script", "image", "font"}
+            )
+        )
         for name, value in attrs:
             if name == "srcset" and value:
                 self.links.extend(
@@ -319,7 +345,7 @@ class LinkExtractor(HTMLParser):
                 continue
             if name not in {"href", "src"} or not value:
                 continue
-            asset = name == "src" or tag.lower() == "link" or is_asset_url(value)
+            asset = name == "src" or linked_resource or is_asset_url(value)
             self.links.append(WikiLink(value=value, asset=asset))
 
 
@@ -822,6 +848,15 @@ def is_asset_url(url: str) -> bool:
     """Return whether a URL path is recognizably an asset resource."""
     path = urllib.parse.urlsplit(url).path
     decoded_path = urllib.parse.unquote(path).casefold()
+    if decoded_path.startswith("/images/"):
+        return True
+    # MediaWiki File:/Image: URLs are HTML description pages, regardless of
+    # their image extensions. The actual uploaded files live under /images/.
+    if any(
+        segment.startswith(("file:", "image:"))
+        for segment in decoded_path.split("/")
+    ):
+        return False
     suffix = Path(path).suffix.casefold()
     return (
         decoded_path.startswith("/images/")
@@ -917,7 +952,12 @@ def local_relative_path(
     path_os_name = os_name
     if path_os_name is None:
         path_os_name = "Windows"
-    return sanitize_relative_path(normalized, os_name=path_os_name)
+    return sanitize_relative_path(
+        normalized,
+        os_name=path_os_name,
+        disambiguate_unicode=site.key == HUMAN_SPHERE_SITE.key,
+        disambiguate_page_case=site.key == HUMAN_SPHERE_SITE.key and not asset,
+    )
 
 
 def rewrite_html_links(
@@ -1164,6 +1204,21 @@ def download_wiki(
     target_urls: dict[str, str] = {}
     attempted = 0
 
+    def record_failure(url: str, error: str) -> None:
+        failures.append(WikiDownloadFailure(url=url, error=error))
+        if progress is not None:
+            progress(
+                WikiCrawlProgress(
+                    attempted=attempted,
+                    saved=len(saved),
+                    failed=len(failures),
+                    queued=len(queue),
+                    url=url,
+                    ignored=len(ignored),
+                    error=error,
+                )
+            )
+
     while queue:
         url, asset = queue.popleft()
 
@@ -1179,11 +1234,9 @@ def download_wiki(
         portable_key = relative.casefold()
         previous_url = target_urls.get(portable_key)
         if previous_url is not None and previous_url != url:
-            failures.append(
-                WikiDownloadFailure(
-                    url=url,
-                    error=f"Portable mirror path collision with {previous_url}: {relative}",
-                )
+            record_failure(
+                url,
+                f"Portable mirror path collision with {previous_url}: {relative}",
             )
             continue
         target_urls[portable_key] = url
@@ -1220,18 +1273,14 @@ def download_wiki(
             if failure_ignore_reason is not None:
                 ignored[url] = WikiIgnoredURL(url=url, reason=failure_ignore_reason)
                 continue
-            failures.append(
-                WikiDownloadFailure(url=url, error=f"{type(exc).__name__}: {exc}")
-            )
+            record_failure(url, f"{type(exc).__name__}: {exc}")
             continue
 
         if asset:
             try:
                 validate_asset_bytes(url, payload)
             except ValueError as exc:
-                failures.append(
-                    WikiDownloadFailure(url=url, error=f"{type(exc).__name__}: {exc}")
-                )
+                record_failure(url, f"{type(exc).__name__}: {exc}")
                 continue
 
         _migrate_blocking_legacy_page_paths(target, destination, site=site)
