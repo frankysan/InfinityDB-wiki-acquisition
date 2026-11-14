@@ -2,7 +2,7 @@ import io
 import os
 import zipfile
 from datetime import datetime
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -502,7 +502,7 @@ def test_english_crawl_skips_spanish_pages_but_keeps_referenced_assets(
             b'<img src="/es/images/shared.png" /></body></html>'
         ),
         english_page: b"<html><body>Rules</body></html>",
-        spanish_asset: b"PNG",
+        spanish_asset: b"\x89PNG\r\n\x1a\nmock image",
     }
     fetched: list[str] = []
 
@@ -541,7 +541,7 @@ def test_spanish_crawl_skips_english_pages_but_keeps_referenced_assets(
             b'<img src="/images/shared.png" /></body></html>'
         ),
         spanish_page: b"<html><body>Reglas</body></html>",
-        english_asset: b"PNG",
+        english_asset: b"\x89PNG\r\n\x1a\nmock image",
     }
     fetched: list[str] = []
 
@@ -645,3 +645,72 @@ def test_main_spanish_snapshot_records_language_and_root(
         "url": module.LANGUAGE_ROOT_URLS["es"],
         "language": "es",
     }
+
+
+def test_archive_rejects_nonportable_members_before_creating_zip(tmp_path: Path) -> None:
+    class Member:
+        def __init__(self, relative: str) -> None:
+            self.relative = relative
+
+        def relative_to(self, _root: Path) -> PurePosixPath:
+            return PurePosixPath(self.relative)
+
+    for name in ("CON.txt", "bad:name.jpg", "bad\nname.jpg", "x" * 241 + ".png"):
+        with pytest.raises(ValueError, match="Non-portable archive path"):
+            module.archive_wiki(
+                [Member(name)], tmp_path / "archives", root=tmp_path
+            )
+
+    assert list((tmp_path / "archives").glob("*.zip")) == []
+
+
+def test_archive_rejects_file_directory_conflict(tmp_path: Path) -> None:
+    class Member:
+        def __init__(self, relative: str) -> None:
+            self.relative = relative
+
+        def relative_to(self, _root: Path) -> PurePosixPath:
+            return PurePosixPath(self.relative)
+
+    with pytest.raises(ValueError, match="file/directory collision"):
+        module.archive_wiki(
+            [Member("unit"), Member("unit/sculpt.png")],
+            tmp_path / "archives",
+            root=tmp_path,
+        )
+
+
+def test_mirror_paths_and_zip_extract_portably(tmp_path: Path) -> None:
+    assert module.sanitize_path_component("CON.txt", os_name="Windows") == "_CON.txt"
+    assert module.sanitize_path_component("bad\nname.jpg", os_name="Windows") == "bad_name.jpg"
+    relative = module.local_relative_path(
+        "https://infinitythewiki.com/images/CON.png", asset=True,
+    )
+    assert relative == "images/_CON.png"
+
+    staging = tmp_path / "staging"
+    item = staging / relative
+    item.parent.mkdir(parents=True)
+    payload = b"\x89PNG\r\n\x1a\nimage"
+    item.write_bytes(payload)
+    archive = module.archive_wiki([item], tmp_path / "archives", root=staging)
+    with zipfile.ZipFile(archive) as source:
+        assert source.namelist() == ["images/_CON.png"]
+        source.extractall(tmp_path / "unpacked")
+    assert (tmp_path / "unpacked" / relative).read_bytes() == payload
+
+
+def test_archive_rejects_directory_case_aliases(tmp_path: Path) -> None:
+    class Member:
+        def __init__(self, relative: str) -> None:
+            self.relative = relative
+
+        def relative_to(self, _root: Path) -> PurePosixPath:
+            return PurePosixPath(self.relative)
+
+    with pytest.raises(ValueError, match="Case-only archive directory collision"):
+        module.archive_wiki(
+            [Member("Unit/first.png"), Member("unit/second.png")],
+            tmp_path / "archives",
+            root=tmp_path,
+        )

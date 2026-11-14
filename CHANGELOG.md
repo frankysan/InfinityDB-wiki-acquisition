@@ -47,6 +47,19 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Fixed
 
+- **Acquisition:** Collect and rewrite MediaWiki `srcset` candidates, including
+  responsive `<source>` images, with links relative to the containing page
+  so images in nested pages resolve offline. Human Sphere standard thumbnail URLs now also
+  enqueue the original upload path when present, without silently inventing
+  success for missing source files.
+- **Acquisition:** Reject HTML error pages and mismatched common binary file
+  signatures instead of archiving corrupted image/document/download assets;
+  resume re-fetches invalid previously staged assets.
+- **Acquisition:** Normalize newly mirrored paths independently of the host OS,
+  prevent distinct source URLs from silently sharing a local filename, reject
+  unsafe ZIP members and file/directory collisions, and protect reserved Windows
+  device names (including names with extensions).
+
 - **Acquisition:** Prevented concurrent Wiki/Human Sphere acquisitions from
   clobbering a previously published v3 snapshot manifest or another run's
   `.json.tmp` staging. Exact-byte identical manifest reruns remain valid,

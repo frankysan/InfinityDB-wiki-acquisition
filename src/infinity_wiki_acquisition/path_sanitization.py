@@ -48,12 +48,12 @@ def sanitize_path_component(value: str, *, os_name: str | None = None) -> str:
     cleaned = cleaned.encode("ascii", "ignore").decode("ascii")
 
     if os_name.startswith("win"):
-        cleaned = re.sub(r'[<>:"|?*]+', "_", cleaned)
+        cleaned = re.sub(r'[\x00-\x1f\x7f<>:"|?*]+', "_", cleaned)
         cleaned = cleaned.replace("/", "_")
         cleaned = cleaned.rstrip(". ")
         if not cleaned:
             cleaned = "_"
-        if cleaned.lower() in _WINDOWS_RESERVED:
+        if cleaned.split(".", 1)[0].lower() in _WINDOWS_RESERVED:
             cleaned = f"_{cleaned}"
         if len(cleaned) > 240:
             cleaned = cleaned[:240].rstrip(". ")

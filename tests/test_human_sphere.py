@@ -12,6 +12,8 @@ import pytest
 
 from infinity_wiki_acquisition import cli as module
 
+PNG_BYTES = b"\x89PNG\r\n\x1a\nmock image"
+
 
 def _http_error(url: str, status: int) -> urllib.error.HTTPError:
     return urllib.error.HTTPError(url, status, "test error", hdrs=Message(), fp=None)
@@ -189,7 +191,7 @@ def test_human_sphere_crawl_seeds_orphan_pages_and_follows_assets(
         ),
         orphan: b"<html><body>Orphan</body></html>",
         linked: b"<html><body>Linked</body></html>",
-        image: b"PNG",
+        image: PNG_BYTES,
     }
     fetched: list[str] = []
 
@@ -233,12 +235,18 @@ def test_human_sphere_downloadable_files_keep_their_extensions(
     site = module.HUMAN_SPHERE_SITE
     root = site.root_urls["en"]
     resource = f"https://www.human-sphere.com/downloads/reference.{extension}"
+    payload = {
+        "pdf": b"%PDF-1.7\n",
+        "zip": b"PK\x03\x04mock",
+        "rar": b"Rar!\x1a\x07\x00mock",
+        "txt": b"download",
+    }[extension]
     pages = {
         root: (
             f'<html><body><a href="/downloads/reference.{extension}">Download</a>'
             "</body></html>"
         ).encode(),
-        resource: b"download",
+        resource: payload,
     }
     monkeypatch.setattr(
         module,
@@ -256,7 +264,7 @@ def test_human_sphere_downloadable_files_keep_their_extensions(
 
     assert result.failures == ()
     relative = f"downloads/reference.{extension}"
-    assert (tmp_path / relative).read_bytes() == b"download"
+    assert (tmp_path / relative).read_bytes() == payload
     assert not (tmp_path / f"{relative}.html").exists()
     mirrored = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
     assert f'href="{relative}"' in mirrored
@@ -366,7 +374,7 @@ def test_human_sphere_resume_reuses_existing_assets(
     image = "https://www.human-sphere.com/images/logo.png"
     existing = tmp_path / "images" / "logo.png"
     existing.parent.mkdir(parents=True)
-    existing.write_bytes(b"existing PNG")
+    existing.write_bytes(PNG_BYTES)
     monkeypatch.setattr(
         module,
         "fetch_all_page_titles",
@@ -387,7 +395,7 @@ def test_human_sphere_resume_reuses_existing_assets(
 
     assert result.failures == ()
     assert fetched == [root]
-    assert existing.read_bytes() == b"existing PNG"
+    assert existing.read_bytes() == PNG_BYTES
     assert image not in fetched
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
         "Main_Page.html",
@@ -524,3 +532,181 @@ def test_main_human_sphere_snapshot_uses_distinct_provenance(
         "url": site.root_urls["en"],
         "language": "en",
     }
+
+
+def test_human_sphere_srcset_downloads_variants_and_original_upload(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    base = "https://www.human-sphere.com/images"
+    image = "Dasyus_Hacker.png"
+    small = f"{base}/thumb/a/ab/{image}/160px-{image}"
+    large = f"{base}/thumb/a/ab/{image}/320px-{image}"
+    original = f"{base}/a/ab/{image}"
+    html = (
+        f'<html><body><picture><source srcset="/images/thumb/a/ab/{image}/160px-{image} 1x, '
+        f'/images/thumb/a/ab/{image}/320px-{image} 2x"></picture></body></html>'
+    )
+    payloads = {root: html.encode(), small: PNG_BYTES, large: PNG_BYTES, original: PNG_BYTES}
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page",),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    def fake_fetch(url: str, *, language: str = "en") -> bytes:
+        fetched.append(url)
+        return payloads[url]
+
+    monkeypatch.setattr(module, "fetch_bytes", fake_fetch)
+    result = module.download_wiki(root, tmp_path, language="en", site=site)
+
+    assert result.failures == ()
+    assert set(fetched) == set(payloads)
+    assert (tmp_path / f"images/a/ab/{image}").read_bytes() == PNG_BYTES
+    assert (tmp_path / f"images/thumb/a/ab/{image}/320px-{image}").read_bytes() == PNG_BYTES
+    mirrored = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert f"images/thumb/a/ab/{image}/160px-{image} 1x" in mirrored
+    assert f"images/thumb/a/ab/{image}/320px-{image} 2x" in mirrored
+
+
+def test_human_sphere_wrong_binary_payload_is_failure_not_published(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    image = "https://www.human-sphere.com/images/sculpt.jpg"
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page",),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": (
+            b'<html><body><h1>Access denied</h1></body></html>'
+            if url == image else b'<img src="/images/sculpt.jpg">'
+        ),
+    )
+
+    result = module.download_wiki(root, tmp_path, language="en", site=site)
+
+    assert len(result.failures) == 1
+    assert result.failures[0].url == image
+    assert "HTML response" in result.failures[0].error
+    assert not (tmp_path / "images/sculpt.jpg").exists()
+
+
+def test_human_sphere_resume_refetches_corrupt_image(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    image = "https://www.human-sphere.com/images/sculpt.png"
+    stored = tmp_path / "images" / "sculpt.png"
+    stored.parent.mkdir(parents=True)
+    stored.write_bytes(b"<html>Challenge</html>")
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page",),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    fetched: list[str] = []
+
+    def fake_fetch(url: str, *, language: str = "en") -> bytes:
+        fetched.append(url)
+        return PNG_BYTES if url == image else b'<img src="/images/sculpt.png">'
+
+    monkeypatch.setattr(module, "fetch_bytes", fake_fetch)
+    result = module.download_wiki(root, tmp_path, language="en", site=site)
+
+    assert result.failures == ()
+    assert fetched == [root, image]
+    assert stored.read_bytes() == PNG_BYTES
+
+
+def test_human_sphere_colliding_normalized_page_paths_fail_closed(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    first = "https://www.human-sphere.com/A%3AB"
+    second = "https://www.human-sphere.com/A%2AB"
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page",),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+    payloads = {
+        root: b'<a href="/A%3AB">First</a><a href="/A%2AB">Second</a>',
+        first: b"<html>First</html>",
+        second: b"<html>Second</html>",
+    }
+    monkeypatch.setattr(
+        module, "fetch_bytes", lambda url, *, language="en": payloads[url],
+    )
+
+    result = module.download_wiki(root, tmp_path, language="en", site=site)
+
+    assert len(result.failures) == 1
+    assert "Portable mirror path collision" in result.failures[0].error
+    assert (tmp_path / "A_B.html").read_text(encoding="utf-8") == "<html>First</html>"
+
+
+def test_human_sphere_srcset_rewriting_decodes_html_query_entities() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    url = site.root_urls["en"]
+    first_url = "https://www.human-sphere.com/images/figure.png?size=100&v=1"
+    second_url = "https://www.human-sphere.com/images/figure.png?size=200&v=1"
+    html = (
+        '<source srcset="/images/figure.png?size=100&amp;v=1 1x, '
+        '/images/figure.png?size=200&amp;v=1 2x">'
+    )
+
+    rewritten = module.rewrite_html_links(html, url, site=site)
+    first = module.local_relative_path(first_url, asset=True, site=site)
+    second = module.local_relative_path(second_url, asset=True, site=site)
+    assert f'srcset="{first} 1x, {second} 2x"' in rewritten
+
+
+def test_asset_validation_rejects_misnamed_binary_format() -> None:
+    with pytest.raises(ValueError, match="Invalid .jpg file signature"):
+        module.validate_asset_bytes(
+            "https://www.human-sphere.com/images/model.jpg",
+            PNG_BYTES,
+        )
+    module.validate_asset_bytes(
+        "https://www.human-sphere.com/images/model.png",
+        PNG_BYTES,
+    )
+
+
+def test_mediawiki_original_url_handles_svg_thumbnails() -> None:
+    url = (
+        "https://human-sphere.com/images/thumb/5/58/Unit_Profile.svg/"
+        "240px-Unit_Profile.svg.png"
+    )
+    assert module.mediawiki_original_image_url(url) == (
+        "https://human-sphere.com/images/5/58/Unit_Profile.svg"
+    )
+    assert module.mediawiki_original_image_url(
+        "https://human-sphere.com/images/5/58/Unit_Profile.svg"
+    ) is None
+
+
+def test_human_sphere_nested_pages_use_correct_relative_image_paths() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    base_url = "https://www.human-sphere.com/Factions/Unit"
+    html = (
+        '<img src="/images/sculpt.png" '
+        'srcset="/images/sculpt.png 1x, /images/sculpt_large.png 2x">'
+        '<a href="/Starter_Boxes">Product</a>'
+    )
+
+    rewritten = module.rewrite_html_links(html, base_url, site=site)
+
+    assert 'src="../images/sculpt.png"' in rewritten
+    assert 'srcset="../images/sculpt.png 1x, ../images/sculpt_large.png 2x"' in rewritten
+    assert 'href="../Starter_Boxes.html"' in rewritten

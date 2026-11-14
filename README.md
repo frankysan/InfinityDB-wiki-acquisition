@@ -35,6 +35,22 @@ uses a preserved incomplete crawl. Partial/failed crawls never publish a ZIP
 or manifest. Archive acquisition is optional and never runs during an
 InfinityDB build, serve or Docker deployment.
 
+MediaWiki `srcset` candidates (including `<picture><source>`) are downloaded
+and rewritten to paths relative to the containing HTML page, including
+pages within subdirectories. For Human Sphere, recognized MediaWiki
+`/images/thumb/...` URLs also enqueue the corresponding original upload
+when available; a source-side HTTP 404 remains explicitly classified as an
+ignored discovered URL. Asset downloads preserve the response bytes exactly,
+but HTML challenges and invalid signatures for common images, archives and
+documents are rejected instead of being published as binary files. Resuming
+an incomplete crawl re-fetches invalid existing assets.
+
+New archive member paths are Windows/macOS/Linux-portable regardless of the
+crawl host. Unsafe filenames, normalization collisions, and file/directory
+conflicts fail before publication. Existing ZIPs are immutable and **not**
+repaired in place: produce a new snapshot and matching manifest if you need
+the enhanced image coverage or portable member validation.
+
 ## Consumer contract
 
 A complete acquisition exports an immutable `WIKI-en ...zip`,

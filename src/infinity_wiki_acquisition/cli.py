@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import posixpath
 import re
 import shutil
 import sys
@@ -22,6 +23,7 @@ import urllib.request
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from html import escape as escape_html, unescape as unescape_html
 from html.parser import HTMLParser
 from pathlib import Path, PurePath
 from typing import NamedTuple, TextIO
@@ -86,7 +88,6 @@ class WikiSite(NamedTuple):
     enumerate_pages: bool = False
     request_delay_seconds: float = 0.0
     page_path_suffix: str = ""
-    windows_portable_paths: bool = False
 
 
 INFINITY_WIKI_SITE = WikiSite(
@@ -132,7 +133,6 @@ HUMAN_SPHERE_SITE = WikiSite(
     enumerate_pages=True,
     request_delay_seconds=0.5,
     page_path_suffix=".html",
-    windows_portable_paths=True,
 )
 
 WIKI_SITES = {
@@ -290,6 +290,18 @@ class ConsoleHistoryProgressReporter:
             self._last_length = 0
 
 
+def srcset_candidates(value: str) -> tuple[tuple[str, str], ...]:
+    """Split MediaWiki's comma-separated image candidates, preserving descriptors."""
+    if "data:" in value.casefold():
+        return ()  # Data URLs contain commas and are never downloaded.
+    candidates: list[tuple[str, str]] = []
+    for part in value.split(","):
+        parts = part.strip().split(None, 1)
+        if parts:
+            candidates.append((parts[0], parts[1] if len(parts) > 1 else ""))
+    return tuple(candidates)
+
+
 class LinkExtractor(HTMLParser):
     """Collect page links and explicitly referenced assets from one HTML page."""
 
@@ -299,6 +311,12 @@ class LinkExtractor(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         for name, value in attrs:
+            if name == "srcset" and value:
+                self.links.extend(
+                    WikiLink(value=candidate, asset=True)
+                    for candidate, _ in srcset_candidates(value)
+                )
+                continue
             if name not in {"href", "src"} or not value:
                 continue
             asset = name == "src" or tag.lower() == "link" or is_asset_url(value)
@@ -784,6 +802,22 @@ def should_skip_url(url: str, *, site: WikiSite = DEFAULT_SITE) -> bool:
     return False
 
 
+def mediawiki_original_image_url(url: str) -> str | None:
+    """Derive the original upload URL from a standard MediaWiki thumbnail URL."""
+    parsed = urllib.parse.urlsplit(url)
+    match = re.fullmatch(
+        r"(/images)/thumb/([0-9a-f])/([0-9a-f]{2})/([^/]+)/[0-9]+px-[^/]+",
+        parsed.path,
+        flags=re.I,
+    )
+    if match is None:
+        return None
+    directory, first, second, filename = match.groups()
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, parsed.netloc, f"{directory}/{first}/{second}/{filename}", "", "")
+    )
+
+
 def is_asset_url(url: str) -> bool:
     """Return whether a URL path is recognizably an asset resource."""
     path = urllib.parse.urlsplit(url).path
@@ -881,7 +915,7 @@ def local_relative_path(
             normalized = f"{normalized}__q_{query_hash}"
 
     path_os_name = os_name
-    if path_os_name is None and site.windows_portable_paths:
+    if path_os_name is None:
         path_os_name = "Windows"
     return sanitize_relative_path(normalized, os_name=path_os_name)
 
@@ -897,46 +931,68 @@ def rewrite_html_links(
     """Rewrite included pages/assets to local mirror paths for one language."""
     _require_site_language(site, language)
     pattern = re.compile(
-        r'(?P<attr>\b(?:href|src)\s*=\s*["\'])(?P<value>[^"\']+)(?P<quote>["\'])', re.I
+        r"""(?P<attr>(?<![\w-])(?:href|src|srcset)\s*=\s*["'])(?P<value>[^"']+)(?P<quote>["'])""",
+        re.I,
     )
+    source_path = local_relative_path(base_url, site=site, os_name=os_name)
+    source_directory = posixpath.dirname(source_path)
 
-    def replace(match: re.Match[str]) -> str:
-        value = match.group("value")
-        if not value:
-            return match.group(0)
+    def page_relative(path: str) -> str:
+        return posixpath.relpath(path, start=source_directory or ".")
 
+    def rewrite_value(value: str, *, asset: bool) -> str:
         candidate = urllib.parse.urljoin(base_url, value)
         parsed = urllib.parse.urlparse(candidate)
         hostname = (parsed.hostname or "").lower()
 
         if value.lower().startswith(("javascript:", "mailto:", "data:")):
-            return match.group(0)
-
+            return value
         if ignored_url_reason(candidate, site=site) is not None:
-            return f"{match.group('attr')}{candidate}{match.group('quote')}"
-
-        attr = match.group("attr").lstrip().casefold()
-        asset = attr.startswith("src") or is_asset_url(candidate)
+            return candidate
 
         if hostname in site.asset_hosts:
-            relative = local_relative_path(candidate, asset=True, site=site, os_name=os_name)
+            relative = page_relative(
+                local_relative_path(candidate, asset=True, site=site, os_name=os_name)
+            )
             if parsed.fragment:
                 relative = f"{relative}#{parsed.fragment}"
-            return f"{match.group('attr')}{relative}{match.group('quote')}"
+            return relative
 
         if hostname in site.page_hosts or not hostname:
             if not asset and not wiki_page_matches_language(
-                candidate,
-                language,
-                site=site,
+                candidate, language, site=site
             ):
-                return f"{match.group('attr')}{candidate}{match.group('quote')}"
-            relative = local_relative_path(candidate, asset=asset, site=site, os_name=os_name)
+                return candidate
+            relative = page_relative(
+                local_relative_path(candidate, asset=asset, site=site, os_name=os_name)
+            )
             if parsed.fragment:
                 relative = f"{relative}#{parsed.fragment}"
-            return f"{match.group('attr')}{relative}{match.group('quote')}"
+            return relative
 
-        return match.group(0)
+        return value
+
+    def replace(match: re.Match[str]) -> str:
+        value = unescape_html(match.group("value"))
+        attr = match.group("attr").lstrip().split("=", 1)[0].strip().casefold()
+        if attr == "srcset":
+            if not srcset_candidates(value):
+                return match.group(0)
+            chunks = []
+            for part in value.split(","):
+                pieces = re.match(r"(\s*)(\S+)(.*)", part, re.S)
+                if pieces is None:
+                    chunks.append(part)
+                else:
+                    chunks.append(
+                        pieces.group(1)
+                        + rewrite_value(pieces.group(2), asset=True)
+                        + pieces.group(3)
+                    )
+            rewritten = ",".join(chunks)
+        else:
+            rewritten = rewrite_value(value, asset=attr == "src" or is_asset_url(value))
+        return f"{match.group('attr')}{escape_html(rewritten, quote=True)}{match.group('quote')}"
 
     return pattern.sub(replace, html_text)
 
@@ -952,7 +1008,11 @@ def fetch_bytes(url: str, *, language: str = "en") -> bytes:
         url,
         headers={
             "User-Agent": USER_AGENT,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": (
+                "*/*"
+                if is_asset_url(url)
+                else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            ),
             "Accept-Language": _site_accept_language(language),
             "Connection": "keep-alive",
         },
@@ -1031,6 +1091,33 @@ def _migrate_blocking_legacy_page_paths(
             blocker.replace(migrated)
 
 
+def validate_asset_bytes(url: str, payload: bytes) -> None:
+    """Refuse HTML challenges and mislabeled image/document payloads."""
+    suffix = Path(urllib.parse.urlsplit(url).path).suffix.casefold()
+    header = payload[:1024].lstrip().lower()
+    if (
+        header.startswith((b"<!doctype html", b"<html", b"<head", b"<body"))
+        or (b"<html" in header and b"</html" in payload[-1024:].lower())
+    ):
+        raise ValueError("HTML response received for an asset URL")
+    signatures = {
+        ".png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
+        ".jpg": payload.startswith(b"\xff\xd8\xff"),
+        ".jpeg": payload.startswith(b"\xff\xd8\xff"),
+        ".gif": payload.startswith((b"GIF87a", b"GIF89a")),
+        ".webp": payload.startswith(b"RIFF") and payload[8:12] == b"WEBP",
+        ".avif": payload[4:8] == b"ftyp" and b"avif" in payload[8:32],
+        ".pdf": b"%PDF-" in payload[:1024],
+        ".zip": payload.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")),
+        ".rar": payload.startswith(b"Rar!\x1a\x07"),
+        ".ico": payload.startswith(b"\x00\x00\x01\x00"),
+        ".woff": payload.startswith(b"wOFF"),
+        ".woff2": payload.startswith(b"wOF2"),
+    }
+    if suffix in signatures and not signatures[suffix]:
+        raise ValueError(f"Invalid {suffix} file signature")
+
+
 def download_wiki(
     base_url: str,
     destination: Path,
@@ -1074,6 +1161,7 @@ def download_wiki(
     pages: dict[str, WikiPage] = {}
     failures: list[WikiDownloadFailure] = []
     ignored: dict[str, WikiIgnoredURL] = {}
+    target_urls: dict[str, str] = {}
     attempted = 0
 
     while queue:
@@ -1088,9 +1176,25 @@ def download_wiki(
 
         relative = local_relative_path(url, asset=asset, site=site)
         target = destination / relative
-        if asset and target.is_file():
-            saved.add(target)
+        portable_key = relative.casefold()
+        previous_url = target_urls.get(portable_key)
+        if previous_url is not None and previous_url != url:
+            failures.append(
+                WikiDownloadFailure(
+                    url=url,
+                    error=f"Portable mirror path collision with {previous_url}: {relative}",
+                )
+            )
             continue
+        target_urls[portable_key] = url
+        if asset and target.is_file():
+            try:
+                validate_asset_bytes(url, target.read_bytes())
+            except ValueError:
+                pass  # A previous interrupted crawl may contain an HTML challenge.
+            else:
+                saved.add(target)
+                continue
 
         attempted += 1
         if progress is not None:
@@ -1120,6 +1224,15 @@ def download_wiki(
                 WikiDownloadFailure(url=url, error=f"{type(exc).__name__}: {exc}")
             )
             continue
+
+        if asset:
+            try:
+                validate_asset_bytes(url, payload)
+            except ValueError as exc:
+                failures.append(
+                    WikiDownloadFailure(url=url, error=f"{type(exc).__name__}: {exc}")
+                )
+                continue
 
         _migrate_blocking_legacy_page_paths(target, destination, site=site)
         write_bytes(target, payload)
@@ -1152,27 +1265,33 @@ def download_wiki(
         parser.feed(text)
         for link in parser.links:
             absolute = urllib.parse.urljoin(url, link.value)
-            candidate = canonical_crawl_url(absolute, asset=link.asset, site=site)
-            if candidate in discovered:
-                continue
-            discovered.add(candidate)
+            candidates = [(absolute, link.asset)]
+            if link.asset and site is HUMAN_SPHERE_SITE:
+                original_image = mediawiki_original_image_url(absolute)
+                if original_image is not None:
+                    candidates.append((original_image, True))
+            for source, asset_link in candidates:
+                candidate = canonical_crawl_url(source, asset=asset_link, site=site)
+                if candidate in discovered:
+                    continue
+                discovered.add(candidate)
 
-            ignore_reason = ignored_url_reason(candidate, site=site)
-            if ignore_reason is not None:
-                ignored[candidate] = WikiIgnoredURL(
-                    url=candidate,
-                    reason=ignore_reason,
-                )
-                continue
-            if should_skip_url(candidate, site=site):
-                continue
-            if not link.asset and not wiki_page_matches_language(
-                candidate,
-                language,
-                site=site,
-            ):
-                continue
-            queue.append((candidate, link.asset))
+                ignore_reason = ignored_url_reason(candidate, site=site)
+                if ignore_reason is not None:
+                    ignored[candidate] = WikiIgnoredURL(
+                        url=candidate,
+                        reason=ignore_reason,
+                    )
+                    continue
+                if should_skip_url(candidate, site=site):
+                    continue
+                if not asset_link and not wiki_page_matches_language(
+                    candidate,
+                    language,
+                    site=site,
+                ):
+                    continue
+                queue.append((candidate, asset_link))
 
     return WikiDownloadResult(
         files=tuple(
