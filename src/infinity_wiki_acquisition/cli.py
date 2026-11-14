@@ -905,11 +905,22 @@ def canonical_crawl_url(
     if hostname in site.page_hosts:
         netloc = site.canonical_host
         scheme = urllib.parse.urlsplit(site.root_urls[site.languages[0]]).scheme
+    # An allpages title might encode punctuation (%2C), while rendered HTML
+    # spells the same punctuation literally. Normalize each URL path segment
+    # before deduplication. Split first so encoded slashes remain distinct
+    # from real path separators; preserve literal percent signs by quoting.
+    path = "/".join(
+        urllib.parse.quote(
+            urllib.parse.unquote(segment),
+            safe=":@!$&'()*+,;=-._~",
+        )
+        for segment in (parsed.path or "/").split("/")
+    )
     return urllib.parse.urlunsplit(
         (
             scheme,
             netloc,
-            parsed.path or "/",
+            path,
             parsed.query if asset else "",
             "",
         )

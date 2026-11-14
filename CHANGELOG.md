@@ -59,6 +59,10 @@ from the downloader and shared archive/provenance Git history and the
   their titles end in `.JPG`, `.png` or another image extension. HTML
   `<link rel="canonical">` and license metadata now resolve as page links
   rather than causing spurious binary-asset failures.
+- **Acquisition:** Canonicalize percent-encoded versus literal URL punctuation
+  before queue deduplication, fixing false collisions between links such as
+  `Arslan%2C_Security_Chief` and `Arslan,_Security_Chief` without merging
+  genuinely different titles, case variants, or asset query parameters.
 - **Acquisition:** Normalize newly mirrored paths independently of the host OS,
   prevent distinct source URLs from silently sharing a local filename, reject
   unsafe ZIP members and file/directory collisions, and protect reserved Windows

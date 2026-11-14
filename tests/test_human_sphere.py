@@ -637,8 +637,12 @@ def test_human_sphere_colliding_normalized_page_paths_fail_closed(
 ) -> None:
     site = module.HUMAN_SPHERE_SITE
     root = site.root_urls["en"]
-    first = "https://www.human-sphere.com/A%3AB"
-    second = "https://www.human-sphere.com/A%2AB"
+    first = module.canonical_crawl_url(
+        "https://www.human-sphere.com/A%3AB", site=site,
+    )
+    second = module.canonical_crawl_url(
+        "https://www.human-sphere.com/A%2AB", site=site,
+    )
     monkeypatch.setattr(
         module, "fetch_all_page_titles",
         lambda *, language, site: ("Main Page",),
@@ -962,3 +966,122 @@ def test_link_metadata_does_not_turn_canonical_pages_into_assets(
     main = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
     assert 'rel="canonical" href="Haetae.html"' in main
     assert 'rel="stylesheet" href="' in main
+
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Táowù,_Mastermind_and_Schemer",
+        "Oktavia_Grimmsdottir,_Icebreaker_Harpooner",
+        "Arslan,_Security_Chief",
+        "Dogtags,_Markers_and_Silhouettes",
+        "Cliff-Jumpers,_Extreme_Jump_Unit",
+        "Gearheads,_Tech_Savant_Team",
+        "Harbingers,_New_Mankind_Defense_Infantry",
+        "Raindancers,_Light_Assault_Company",
+        "Stingers,_Security_Tactical_Unit",
+        "Wraith-1,_Clandestine_Action_Group",
+    ],
+)
+def test_equivalent_encoded_and_literal_comma_urls_share_crawl_identity(title: str) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    encoded = module.page_url_from_title(title, language="en", site=site)
+    plain = encoded.replace("%2C", ",")
+    assert "%2C" in encoded
+    assert module.canonical_crawl_url(encoded, site=site) == (
+        module.canonical_crawl_url(plain, site=site)
+    )
+    assert module.canonical_crawl_url(
+        plain, site=site
+    ) == module.canonical_crawl_url(plain.replace(",", "%2c"), site=site)
+    assert module.local_relative_path(encoded, site=site) == (
+        module.local_relative_path(plain, site=site)
+    )
+
+
+def test_canonical_crawl_normalizes_escapes_without_merging_distinct_titles() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = "https://www.human-sphere.com/"
+    assert module.canonical_crawl_url(root + "Arslan%2C_Security_Chief", site=site) == (
+        module.canonical_crawl_url(root + "Arslan,_Security_Chief", site=site)
+    )
+    assert module.canonical_crawl_url(root + "Arslan%252C_Security_Chief", site=site) != (
+        module.canonical_crawl_url(root + "Arslan%2C_Security_Chief", site=site)
+    )
+    assert module.canonical_crawl_url(root + "A%2FB", site=site) != (
+        module.canonical_crawl_url(root + "A/B", site=site)
+    )
+    assert module.canonical_crawl_url(
+        root + "Arslan%2C_Security_Chief?view=1", site=site
+    ) == module.canonical_crawl_url(root + "Arslan,_Security_Chief", site=site)
+    first = root + "images/image%2Cmodel.png?size=1"
+    second = root + "images/image,model.png?size=2"
+    assert module.canonical_crawl_url(first, asset=True, site=site) != (
+        module.canonical_crawl_url(second, asset=True, site=site)
+    )
+    assert module.canonical_crawl_url(first, asset=True, site=site).startswith(
+        root + "images/image,model.png?"
+    )
+
+
+def test_human_sphere_crawl_deduplicates_encoded_comma_and_literal_comma_links(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    titles = (
+        "Táowù,_Mastermind_and_Schemer",
+        "Oktavia_Grimmsdottir,_Icebreaker_Harpooner",
+        "Arslan,_Security_Chief",
+        "Dogtags,_Markers_and_Silhouettes",
+        "Cliff-Jumpers,_Extreme_Jump_Unit",
+        "Gearheads,_Tech_Savant_Team",
+        "Harbingers,_New_Mankind_Defense_Infantry",
+        "Raindancers,_Light_Assault_Company",
+        "Stingers,_Security_Tactical_Unit",
+        "Wraith-1,_Clandestine_Action_Group",
+    )
+    # allpages emits a percent-encoded comma; HTML links can contain a raw one.
+    initial_urls = [
+        module.page_url_from_title(title, language="en", site=site)
+        for title in titles
+    ]
+    canonical_urls = [
+        module.canonical_crawl_url(url, site=site) for url in initial_urls
+    ]
+    raw_links = [
+        url.replace("%2C", ",") for url in initial_urls
+    ]
+    markup = "<html><body>" + "".join(
+        f'<a href="{url}">page</a>' for url in raw_links
+    ) + "</body></html>"
+    pages = {
+        root: markup.encode("utf-8"),
+        **{url: b"<html><body>Content</body></html>" for url in canonical_urls},
+    }
+    calls: list[str] = []
+
+    def fetch(url: str, *, language: str = "en") -> bytes:
+        calls.append(url)
+        return pages[url]
+
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: tuple(t.replace("_", " ") for t in titles),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(module, "fetch_bytes", fetch)
+
+    result = module.download_wiki(root, tmp_path, site=site)
+
+    assert result.failures == ()
+    assert len(calls) == len(titles) + 1
+    assert len(calls) == len(set(calls))
+    assert len(result.pages) == len(titles) + 1
+    assert all(
+        (tmp_path / module.local_relative_path(url, site=site)).is_file()
+        for url in canonical_urls
+    )
+    assert len({page.path.casefold() for page in result.pages}) == len(result.pages)

@@ -51,6 +51,11 @@ have image-file extensions; the actual uploads remain binary assets. During a cr
 failures and every hundredth subsequent failure are printed immediately to
 stderr, so operators can diagnose problems without completing the crawl.
 
+Equivalent MediaWiki URLs (for example, an encoded `%2C` and a literal
+comma in a page title) are canonicalized before scheduling downloads. This
+avoids treating alternate URL spellings for one page as filename collisions,
+while leaving distinct page-title identities separate.
+
 New archive member paths are Windows/macOS/Linux-portable regardless of the
 crawl host. For Human Sphere, non-ASCII names and HTML page titles with
 nonstandard capitalization receive a stable `__u_<hash>` source-identity
