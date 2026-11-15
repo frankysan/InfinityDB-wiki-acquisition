@@ -439,6 +439,27 @@ The command validates both capture sets and prints the JSON report to
 standard output; an inconsistent or missing input fails without
 modifying either artifact set.
 
+**Source-rendering authority assessment (P2.4c.2b.2b.2a):** To inspect
+the remaining proof obligations for a snapshot with original HTML
+replay, run:
+
+```bash
+python -m tools.audit_render_authority REPLAY.zip SNAPSHOT.zip MANIFEST.json INVENTORY.json
+```
+
+Add `--previous OLD_REPLAY.zip OLD_SNAPSHOT.zip OLD_MANIFEST.json
+OLD_INVENTORY.json` to incorporate an independently checked earlier
+capture. The report checks archive/replay hashes and transport evidence,
+identifies incomplete revision/relationship observations and lists
+site-specific missing guarantees. A detected same-strong-ETag/different-
+HTML collision is elevated to a source-wide negative signal. The report
+always returns `reuseAuthorized=false`, `skippedHtmlBodyCount=0`.
+See [rendered HTML freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md)
+for the reviewed MediaWiki/HTTP sources and the exact unblock conditions.
+Generic MediaWiki configuration documentation is **not** a verified
+contract for either source deployment. This stage adds no conditional
+page requests or changes to snapshot formats.
+
 This offline comparison can expose *counterexamples* to an ETag freshness
 assumption; matching ETags and HTML in a finite number of captures **cannot
 prove** that the server always invalidates a rendered page after every

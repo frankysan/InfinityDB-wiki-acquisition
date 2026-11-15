@@ -47,6 +47,12 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.4c.2b.2b.2a non-authorizing
+  source-rendering authority assessments backed by independently verified
+  snapshot/replay artifacts and optional differential comparison. A confirmed
+  strong-ETag collision becomes a source-wide blocker. The reviewed
+  HTTP/MediaWiki contract documents external requirements before any
+  conditional HTML reuse; snapshots and full-fetch behavior are unchanged.
 - **Acquisition:** Added P2.4c.2b.2b.1 offline differential rendered-HTML
   freshness auditing across independently verified full snapshots and raw
   source-replay companion ZIPs. Reports exact source-byte changes, strong

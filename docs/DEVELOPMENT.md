@@ -420,6 +420,40 @@ Agents start with [AGENTS.md](../AGENTS.md).
   outputs across the actual fetch time window, with full offline
   preflight/checkpoint/conditional fallback verification.
 
+  P2.4c.2b.2b.2a investigated the authoritative HTTP and MediaWiki
+  semantics; see `docs/RENDER_FRESHNESS_AUTHORITY.md` for linked RFC
+  9110 sections and source/manual documentation. Generic MediaWiki
+  parser-cache invalidation is asynchronous; REL1_35 generated a weak
+  parser-cache ETag, and neither behavior is evidence of the specific
+  remote sites' actual HTTP/extension/CDN configuration. No target-site
+  implementation/configuration contract, complete dependency graph or
+  bounded source-time horizon was verified. A positive skip gate is
+  externally blocked, not inferred from an unbroken test run.
+
+  `render_freshness_authority.assess_html_source_authority` consumes
+  the four complete existing snapshot/replay paths and optionally a
+  previous four-path tuple. It checks full parent provenance, exact
+  transport variants, and optionally verifies two complete captures
+  through the differential audit. Its separate v1 report fingerprints
+  the current artifacts, exposes page-specific transport and revision/
+  relationship gaps and fixed source-side missing obligations. Any
+  verified equal-ETag/different-source-body finding becomes both a
+  page-specific and source-wide blocking condition. The entrypoint
+  always sets `reuseAuthorized: false`, `skippedHtmlBodyCount: 0`
+  and every decision to `refetch-required`, even when transport
+  probes and two snapshot bodies match. The read-only command is
+  `python -m tools.audit_render_authority REPLAY ZIP MANIFEST INVENTORY
+  [--previous OLD_REPLAY OLD_ZIP OLD_MANIFEST OLD_INVENTORY]`.
+  This is optional independent analysis and does not alter the existing
+  ZIP/v3 manifest/inventory v1-v2 or grant any crawler permissions.
+
+  The next positive cutover is blocked on actual deployment-specific
+  evidence (site/server/skin/extension/proxy implementation, validator
+  binding, jobs/purges/retention, and source-time guarantees). Until that
+  exists, keep P2.4c open and advance independently actionable P2.5
+  resumability; never replace the HTTP full-fetch path with unverified
+  conditional 304 reuse.
+
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
 
