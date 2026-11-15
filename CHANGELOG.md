@@ -47,6 +47,13 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.4c.2b.2b.1 offline differential rendered-HTML
+  freshness auditing across independently verified full snapshots and raw
+  source-replay companion ZIPs. Reports exact source-byte changes, strong
+  ETag mismatches/collisions, same-page-revision render drift and explicit
+  identity/variant unknowns, with source artifact hashes and immutable
+  non-reuse status. Finite comparisons cannot certify future rendered
+  freshness, and HTML body refetch remains mandatory.
 - **Acquisition:** Added P2.4c.2b.2a versioned HTML HTTP variant
   observations, including explicit identity encoding, Vary, content language,
   cache-control, and stricter source URL/validator conditions. Independently

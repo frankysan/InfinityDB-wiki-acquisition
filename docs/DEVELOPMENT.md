@@ -394,6 +394,32 @@ Agents start with [AGENTS.md](../AGENTS.md).
   render/source-time positive authority and checkpoint integration
   remain open in P2.4c.2b.2b.
 
+  P2.4c.2b.2b.1 adds the read-only differential audit
+  `render_freshness_audit.compare_rendered_captures`. Its eight arguments
+  are two complete (replay ZIP, snapshot ZIP, v3 manifest, v1/v2 inventory)
+  sets, with the earlier capture first. Before comparing it verifies all
+  eight inputs offline through the existing independent snapshot/replay
+  validators and rejects different site/language, backward acquisition
+  timestamps or backward per-page HTML observation times. Each exact-URL,
+  stable-numeric-ID current-page pair is compared using independently
+  verified original HTML hashes. Comparison of strong ETags is allowed only
+  if both responses are exact-URL HTTP 200, version-2 explicitly supported
+  transport variants and identical request/rewrite profiles. The audit
+  records an unchanged ETag alongside changed original HTML as a
+  counterexample to safe validation, a same-page-revision render drift,
+  changed ETags with identical/different bytes, unknown/incomparable
+  variants, as well as newly enumerated and absent (not confirmed deleted)
+  pages. Oldids and historical-only entries are not counted as current
+  HTML. Output includes exact artifact hashes, direct-parent lineage
+  indication, page counts and always `reuseAuthorized: false`. All
+  comparisons are observations of *two historical acquisitions*: a
+  lack of ETag collisions is not proof of future correctness or
+  transitive render dependency/RecentChanges coverage. The positive gate
+  remains blocked until the source provides an authoritative mechanism
+  binding rendered HTTP versions to complete template/module/category/index
+  outputs across the actual fetch time window, with full offline
+  preflight/checkpoint/conditional fallback verification.
+
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
 

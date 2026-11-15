@@ -410,6 +410,44 @@ Old archives remain readable; only new HTTP-header-observed captures can
 become transport-probe candidates, and the original source-replay companion
 is still required.
 
+**Cross-snapshot rendering/ETag audit (P2.4c.2b.2b.1):**
+`compare_rendered_captures(previous_bundle, previous_archive,
+previous_manifest, previous_inventory, current_bundle, current_archive,
+current_manifest, current_inventory)` independently verifies both
+original-body replay bundles and their complete snapshot artifacts. It
+compares exact current-page URLs and numeric page identity, source response
+hashes, strong ETags, recorded request/response variants and observed
+page revision IDs. The deterministic report detects a **same strong ETag
+for different original HTML bytes**, and rendered-body drift with the
+same page revision. Unknown profiles, changed URL/page identity, missing
+current pages and noncomparable variants are explicitly reported rather
+than considered stable. No historical-only/oldid member is mistaken for
+current HTML. Reports bind both input artifact sets by SHA-256 and record
+whether the later snapshot directly descends from the earlier one.
+
+Run the audit read-only with the companion, snapshot, manifest and
+inventory for the earlier capture followed by the same four artifacts
+for the later capture:
+
+```bash
+python -m tools.audit_render_freshness \
+  OLD.source-replay.zip OLD.zip OLD.json OLD.inventory.json \
+  NEW.source-replay.zip NEW.zip NEW.json NEW.inventory.json
+```
+
+The command validates both capture sets and prints the JSON report to
+standard output; an inconsistent or missing input fails without
+modifying either artifact set.
+
+This offline comparison can expose *counterexamples* to an ETag freshness
+assumption; matching ETags and HTML in a finite number of captures **cannot
+prove** that the server always invalidates a rendered page after every
+template/module/category change. The report always has
+`reuseAuthorized=false`; it does not modify either snapshot or initiate
+HTTP downloads. A source-side rendering validator contract and bounded
+source-time/change-horizon proof remain prerequisites for any positive
+reuse gate.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It
