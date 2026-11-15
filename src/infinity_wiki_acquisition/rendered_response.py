@@ -33,6 +33,7 @@ def request_and_rewrite_profile(
     *,
     site: Any,
     language: str,
+    transport_v2: bool = False,
 ) -> dict[str, Any]:
     """Fingerprint the exact installed rewrite implementation and request headers."""
     from infinity_wiki_acquisition import cli, path_sanitization
@@ -45,6 +46,7 @@ def request_and_rewrite_profile(
             "User-Agent": cli.USER_AGENT,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": cli._site_accept_language(language),
+            **({"Accept-Encoding": "identity"} if transport_v2 else {}),
         },
         "rewriteMethod": REWRITE_METHOD,
         "producerSourceSha256": _source_hash(cli.__file__),
@@ -90,8 +92,31 @@ def capture_rendered_response(
         raise ValueError("A source HTML 304 requires a verified conditional reuse path")
     if not isinstance(payload, bytes) or not isinstance(rewritten, bytes):
         raise ValueError("Expected original and rewritten HTML bytes")
+    from infinity_wiki_acquisition.html_transport import derive_transport_variant
+
+    raw_headers = {
+        "Vary": getattr(payload, "vary", None),
+        "Content-Encoding": getattr(payload, "content_encoding", None),
+        "Content-Language": getattr(payload, "content_language", None),
+        "Cache-Control": getattr(payload, "cache_control", None),
+    }
+    variant = None
+    if getattr(payload, "headers_observed", False) is True:
+        try:
+            variant = derive_transport_variant(
+                raw_headers=raw_headers,
+                status=status, effective_url=effective_url, url=url,
+                strong_etag=validator, language=language,
+                request_headers=request_and_rewrite_profile(
+                    site=site, language=language, transport_v2=True,
+                )["requestHeaders"],
+            )
+        except ValueError:
+            # Unusable HTTP headers do not turn a successful source-body
+            # download into permission to reuse the response.
+            variant = None
     return {
-        "formatVersion": PROFILE_VERSION,
+        "formatVersion": 2 if variant is not None else PROFILE_VERSION,
         "scope": SCOPE,
         "pageUrl": url,
         "memberPath": path,
@@ -103,7 +128,10 @@ def capture_rendered_response(
         "observedEtag": observed_etag,
         "strongEtag": validator,
         "lastModified": last_modified,
-        "profile": request_and_rewrite_profile(site=site, language=language),
+        "profile": request_and_rewrite_profile(
+            site=site, language=language, transport_v2=variant is not None,
+        ),
+        **({"transportVariant": variant} if variant is not None else {}),
         "replayCoverage": REPLAY_COVERAGE,
         "reuseAuthorized": False,
     }
@@ -120,14 +148,18 @@ def validate_rendered_response(
     from infinity_wiki_acquisition.cli import _is_strong_etag
     from infinity_wiki_acquisition.page_relationships import _time
 
+    version = evidence.get("formatVersion") if isinstance(evidence, dict) else None
+    required = {
+        "formatVersion", "scope", "pageUrl", "memberPath",
+        "htmlFetchedAt", "originalResponseSha256", "rewrittenMemberSha256",
+        "httpStatus", "httpEffectiveUrl", "observedEtag", "strongEtag",
+        "lastModified", "profile", "replayCoverage", "reuseAuthorized",
+    }
     if (not isinstance(evidence, dict)
-            or set(evidence) != {
-                "formatVersion", "scope", "pageUrl", "memberPath",
-                "htmlFetchedAt", "originalResponseSha256", "rewrittenMemberSha256",
-                "httpStatus", "httpEffectiveUrl", "observedEtag", "strongEtag",
-                "lastModified", "profile", "replayCoverage", "reuseAuthorized",
-            }
-            or evidence["formatVersion"] != PROFILE_VERSION
+            or version not in {1, 2}
+            or set(evidence) != (required | (
+                {"transportVariant"} if version == 2 else set()
+            ))
             or evidence["scope"] != SCOPE
             or evidence["replayCoverage"] != REPLAY_COVERAGE
             or evidence["reuseAuthorized"] is not False
@@ -180,7 +212,11 @@ def validate_rendered_response(
         raise ValueError("Invalid HTML request/rewrite profile")
     headers = profile["requestHeaders"]
     if (not isinstance(headers, dict)
-            or set(headers) != {"User-Agent", "Accept", "Accept-Language"}
+            or set(headers) != (
+                {"User-Agent", "Accept", "Accept-Language"}
+                | ({"Accept-Encoding"} if version == 2 else set())
+            )
+            or (version == 2 and headers["Accept-Encoding"] != "identity")
             or any(not isinstance(v, str) or not v or _clean_header(v) != v
                    for v in headers.values())
             or headers["Accept"]
@@ -194,3 +230,25 @@ def validate_rendered_response(
                 for key in ("producerSourceSha256", "sanitizerSourceSha256")
             )):
         raise ValueError("Incomplete HTML request/rewrite fingerprint")
+    if version == 2:
+        from infinity_wiki_acquisition.html_transport import (
+            derive_transport_variant,
+        )
+
+        variant = evidence["transportVariant"]
+        if (not isinstance(variant, dict)
+                or set(variant) != {
+                    "formatVersion", "observedHeaders", "varyFields",
+                    "transportProbeEligible", "unmetTransportConditions",
+                    "reuseAuthorized",
+                }
+                or variant["reuseAuthorized"] is not False):
+            raise ValueError("Invalid versioned HTML transport evidence")
+        expected_variant = derive_transport_variant(
+            raw_headers=variant["observedHeaders"],
+            status=status, effective_url=effective,
+            url=evidence["pageUrl"], strong_etag=evidence["strongEtag"],
+            language=language, request_headers=headers,
+        )
+        if variant != expected_variant:
+            raise ValueError("HTML transport probe evidence is inconsistent")

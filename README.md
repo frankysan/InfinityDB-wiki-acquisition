@@ -384,6 +384,32 @@ redownload, fresh discovery and source-time limitations remain unchanged.
 `--from-snapshot --include-history` does not fetch current pages, so
 it cannot create a new replay companion from that operation.
 
+**Conditional HTML transport preflight (P2.4c.2b.2a):** HTTP requests
+now explicitly send `Accept-Encoding: identity`. When real HTTP response
+headers are available, the per-page `renderedResponseVersion=2` records
+the observed `Vary`, content encoding, content language and cache-control
+headers in a separately recomputable `transportVariant` assessment.
+The existing version 1 format remains valid. A missing/old response-header
+record, weak/missing ETag, redirect, wildcard/unrecognized `Vary`, compressed
+body, mismatched content language or `no-store` blocks even a conditional
+transport *probe*.
+
+After independently verifying the parent snapshot and original-byte replay
+companion, `prepare_html_transport_probes(bundle, archive, manifest,
+inventory)` produces a read-only assessment of which exact URLs and
+representation variants could be probed conditionally. The separate
+`verify_html_transport_response(..., request_url=..., result=...)`
+entrypoint validates HTTP 304 response metadata against that parent and
+rejects changed `Vary`, URL, ETag and request-variant evidence. A received
+HTTP 200 always requires fresh-body processing. Even a correctly validated
+304 response yields `reuseAuthorized=false` and
+`fetchBodyRequired=true`: the existing post-crawl invalidation audit and
+unverified source-time/dependency closure do **not** authorize reuse.
+No new page-level conditional network requests are initiated by these APIs.
+Old archives remain readable; only new HTTP-header-observed captures can
+become transport-probe candidates, and the original source-replay companion
+is still required.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It

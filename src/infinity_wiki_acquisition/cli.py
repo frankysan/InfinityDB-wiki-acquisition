@@ -185,6 +185,9 @@ class WikiFetchedBytes(bytes):
         cls, data: bytes, *, effective_url: str, http_status: int | None,
         etag: str | None = None, last_modified: str | None = None,
         conditional_etag: str | None = None,
+        vary: str | None = None, content_encoding: str | None = None,
+        content_language: str | None = None, cache_control: str | None = None,
+        headers_observed: bool = False,
     ) -> "WikiFetchedBytes":
         instance = bytes.__new__(cls, data)
         instance.effective_url = effective_url
@@ -192,6 +195,11 @@ class WikiFetchedBytes(bytes):
         instance.etag = etag
         instance.last_modified = last_modified
         instance.conditional_etag = conditional_etag
+        instance.vary = vary
+        instance.content_encoding = content_encoding
+        instance.content_language = content_language
+        instance.cache_control = cache_control
+        instance.headers_observed = headers_observed
         return instance
 
 
@@ -1324,6 +1332,7 @@ def fetch_bytes(
             else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         ),
         "Accept-Language": _site_accept_language(language),
+        "Accept-Encoding": "identity",
         "Connection": "keep-alive",
     }
     if if_none_match is not None:
@@ -1348,6 +1357,20 @@ def fetch_bytes(
                         if response_headers else None
                     ),
                     conditional_etag=if_none_match,
+                    vary=response_headers.get("Vary") if response_headers else None,
+                    content_encoding=(
+                        response_headers.get("Content-Encoding")
+                        if response_headers else None
+                    ),
+                    content_language=(
+                        response_headers.get("Content-Language")
+                        if response_headers else None
+                    ),
+                    cache_control=(
+                        response_headers.get("Cache-Control")
+                        if response_headers else None
+                    ),
+                    headers_observed=response_headers is not None,
                 )
         except urllib.error.HTTPError as exc:
             if exc.code == 304 and if_none_match is not None:
@@ -1361,6 +1384,20 @@ def fetch_bytes(
                         if response_headers else None
                     ),
                     conditional_etag=if_none_match,
+                    vary=response_headers.get("Vary") if response_headers else None,
+                    content_encoding=(
+                        response_headers.get("Content-Encoding")
+                        if response_headers else None
+                    ),
+                    content_language=(
+                        response_headers.get("Content-Language")
+                        if response_headers else None
+                    ),
+                    cache_control=(
+                        response_headers.get("Cache-Control")
+                        if response_headers else None
+                    ),
+                    headers_observed=response_headers is not None,
                 )
             if not _retryable_fetch_error(exc) or attempt >= FETCH_ATTEMPTS - 1:
                 raise

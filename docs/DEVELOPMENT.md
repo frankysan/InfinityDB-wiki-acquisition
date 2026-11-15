@@ -358,6 +358,42 @@ Agents start with [AGENTS.md](../AGENTS.md).
   (P2.4c.2b.2). Old archives remain compatible with the original required
   three-file verification; companion validation is opt-in and independent.
 
+  P2.4c.2b.2a adds HTTP transport-variant observation without changing
+  crawler reuse. `fetch_bytes` now sends an explicit
+  `Accept-Encoding: identity` request and retains response `Vary`,
+  `Content-Encoding`, `Content-Language`, `Cache-Control` and whether
+  headers were actually observed (including on conditional HTTP 304).
+  `rendered_response.capture_rendered_response` writes optional
+  `renderedResponseVersion=2` with a separately validated
+  `transportVariant` only if bounded response headers were obtained.
+  It preserves v1 records when header metadata is missing/unusable, and
+  the offline verifier accepts both. The version 2 request/rewrite profile
+  explicitly includes `Accept-Encoding: identity`; prior version 1
+  request profiles remain supported and are ineligible for the new
+  transport preflight. The version 2 variant lists only known supported
+  Vary fields (Accept, Accept-Language, User-Agent, Accept-Encoding), and
+  rejects wildcard/unsupported Vary, compressed content, content-language
+  mismatch, no-store, unknown/weak ETag and request/effective URL changes.
+  These are transport-only checks; they are not a source-side proof of
+  HTML freshness or dependency closure.
+
+  `prepare_html_transport_probes` first independently verifies the
+  complete parent ZIP, v3 manifest, inventory v1/v2 and raw source-replay
+  companion. It then compares each current page's exact stored request
+  profile with the installed implementation, and records a versioned,
+  deterministic list of transport candidates and blocking conditions.
+  `verify_html_transport_response` is the safe parent-verified entrypoint
+  for evaluating a mock/live conditional result. It rejects mismatched
+  URLs, ETags, redirects, 304 Vary/encoding/language conflicts, missing
+  observed headers and nonempty 304 bodies. A full 200 response requires
+  normal source-body processing; even a matching 304 returns
+  `reuseAuthorized: false` and `fetchBodyRequired: true`. The older
+  `verify_conditional_html_304` remains non-authorizing and compatible
+  with historical v1 metadata. Never allow the producer to skip HTML
+  merely because a transport probe appears eligible; the independent
+  render/source-time positive authority and checkpoint integration
+  remain open in P2.4c.2b.2b.
+
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
 

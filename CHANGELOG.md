@@ -47,6 +47,13 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.4c.2b.2a versioned HTML HTTP variant
+  observations, including explicit identity encoding, Vary, content language,
+  cache-control, and stricter source URL/validator conditions. Independently
+  checked original-source replay and parent snapshot evidence now support
+  non-authorizing transport probe planning and strict 304 assessment.
+  Unverified render dependencies/source-time still prohibit all HTML
+  download skipping; older v1 response evidence remains supported.
 - **Acquisition:** Added opt-in P2.4c.2b.1 original-current-HTML replay
   companion ZIPs (`--source-replay-dir`) for fresh/updated snapshots.
   Versioned companion evidence binds raw source bytes, complete source-link
