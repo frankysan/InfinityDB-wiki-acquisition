@@ -46,6 +46,13 @@ from the downloader and shared archive/provenance Git history and the
   informational.
 
 ### Added
+- **Acquisition:** Added P2.4a rendered-HTML invalidation signals to
+  refreshed snapshot inventories. The independent verifier checks
+  Template/Module/Category and categorization/index event identities and
+  unverified source-link candidates against published source evidence.
+  Unknown or indirect dependencies and unproven RecentChanges retention
+  never permit HTML reuse; current HTML and discovery stay conservative.
+  Optional v1/v2 metadata does not alter the history/ZIP/provenance contracts.
 
 - **Acquisition:** Added opt-in P2.3c.2 historical-only retention
   (`--update-from --allow-historical-only`). If a previously archived

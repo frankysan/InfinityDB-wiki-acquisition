@@ -978,6 +978,32 @@ def verify_snapshot(
                     source_time == observed_time,
                     "Source-time coverage claims contradict acquired evidence",
                 )
+            invalidation = document["captureMetadata"].get("renderInvalidation")
+            if invalidation is not None:
+                from infinity_wiki_acquisition.render_invalidation import (
+                    assess_render_invalidation,
+                )
+
+                update_metadata = document["captureMetadata"]
+                _require(
+                    parent is not None
+                    and update_metadata.get("updateMode") in {
+                        "verified-full-source-refresh",
+                        "conditional-asset-refresh",
+                        "verified-asset-version-refresh",
+                    }
+                    and update_metadata.get("recentChanges") is not None,
+                    "Render invalidation audit requires update evidence",
+                )
+                expected_invalidation = assess_render_invalidation(
+                    entries.values(),
+                    recent_changes=update_metadata["recentChanges"],
+                    page_moves=update_metadata["pageMovesById"],
+                    absent_page_ids=update_metadata["parentPageIdsAbsentFromEnumeration"],
+                    site=site, language=language,
+                )
+                _require(invalidation == expected_invalidation,
+                         "Render invalidation claims contradict acquisition evidence")
             upload_evidence = [
                 item["uploadVersion"] for item in entries.values()
                 if item.get("kind") == "asset"

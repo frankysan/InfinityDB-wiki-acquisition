@@ -21,6 +21,7 @@ from typing import Any, NamedTuple
 from infinity_wiki_acquisition.crawl_checkpoint import (
     CHECKPOINT_FILENAME, read_crawl_checkpoint,
 )
+from infinity_wiki_acquisition.render_invalidation import assess_render_invalidation
 from infinity_wiki_acquisition.snapshot_inventory import build_snapshot_inventory
 from infinity_wiki_acquisition.snapshot_upgrade import (
     _parent_revision_records, _publish_verified_inventory,
@@ -668,6 +669,11 @@ def update_snapshot(
             "sourceTimeCoverage": assess_source_time_coverage(
                 updated["members"], recent_changes=changes,
                 page_moves=moved, absent_page_ids=absent,
+            ),
+            "renderInvalidation": assess_render_invalidation(
+                updated["members"], recent_changes=changes,
+                page_moves=moved, absent_page_ids=absent,
+                site=site, language=language,
             ),
         }
         updated["parent"] = {

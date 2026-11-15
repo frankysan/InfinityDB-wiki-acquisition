@@ -228,6 +228,19 @@ Agents start with [AGENTS.md](../AGENTS.md).
   invalidation, all rendered HTML continues to be refetched and snapshots
   remain evidence collected across multiple requests rather than an atomic
   remote state. Existing ZIP/v3 manifest/older v1 inventories remain valid.
+  P2.4a now publishes optional `captureMetadata.renderInvalidation` on updates.
+  It classifies observed Template/Module/Category namespace changes,
+  categorization and index signals, and matches changed namespace titles
+  against *unverified* source-HTML page links. Link matches do not establish
+  direct transclusion; module/Scribunto, transitive dependencies and actual
+  category membership remain unknown, as does RecentChanges retention.
+  The offline verifier recomputes every audit field from recorded events,
+  current-page references, moves and absent IDs and rejects stronger claims.
+  Keep fresh allpages/linked discovery and full HTML fetching, including
+  when no change events or link candidates are found. Both historical-only
+  v2 members and archived oldids remain outside the current-page audit.
+  P2.4b must investigate additional paginated MediaWiki API relationships
+  before any future P2.4c HTML-skip decision.
 
 - P2.3c.1 allows `--update-from` to refresh a verified history parent.
   Keep the current page/asset recrawl, imageinfo/ETag reuse and private
@@ -348,6 +361,11 @@ python -m pip install -e ".[test]"
 python -m pip check
 python -m pytest -q
 ```
+
+The equivalent bounded runner `python -m tools.run_offline_tests` accepts zero
+arguments for the full offline pytest suite or explicit `tests/test_*.py` files
+for focused validation. It also supports managed script-job execution without
+shell access, crawls or additional runtime dependencies.
 
 The test suite is offline, using mocked HTTP and temporary directories,
 with no live crawl, private Wiki archives, sibling repositories or third-party

@@ -444,3 +444,27 @@ def test_incorrect_source_site_is_rejected_before_network(tmp_path: Path, monkey
             work_root=tmp_path / "work",
             expected_site="infinity-wiki",
         )
+
+
+def test_render_invalidation_audit_is_independently_verified(
+    tmp_path: Path, monkeypatch,
+):
+    parent = _build_parent(tmp_path)
+    _remote(monkeypatch, changed=True)
+    result = _update(parent, tmp_path)
+    document = verify_snapshot(result.archive, result.manifest, result.inventory)
+    audit = document["captureMetadata"]["renderInvalidation"]
+    assert audit["currentPageCount"] == 3
+    assert audit["observedIndexChangeRcids"] == [101, 102]
+    assert audit["categoryMembershipCoverage"] == "unknown"
+    assert audit["directDependencyCoverage"] == "unknown"
+    assert audit["renderReusePolicy"] == "refetch-all-current-html"
+
+    # Even an otherwise valid ZIP/manifest pair cannot carry a promoted
+    # dependency-coverage or HTML-reuse assertion in the inventory.
+    document["captureMetadata"]["renderInvalidation"]["renderReusePolicy"] = (
+        "reuse-on-unchanged-page-revision"
+    )
+    result.inventory.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="Render invalidation"):
+        verify_snapshot(result.archive, result.manifest, result.inventory)

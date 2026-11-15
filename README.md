@@ -263,6 +263,18 @@ Therefore pages remain fully fetched, and no unchanged revision ID
 certifies the previously rendered content. Future dependency-aware
 verification (P2.4) is required before making stronger claims.
 
+**Rendered HTML invalidation audit (P2.4a):** Updated inventories can now
+carry optional `renderInvalidation` evidence, checked again by
+`verify_snapshot`. It counts observed Template/Module/Category changes,
+categorization, new/move/delete index signals, and source-HTML links to
+changed template/module page titles. Those matches are unverified research
+candidates, *not* proven transclusions. Direct, transitive and Scribunto
+dependencies, category membership and RecentChanges retention all remain
+unknown. Even an empty event/candidate list cannot authorize cached HTML.
+Every current page is still fetched and rewritten after fresh discovery.
+The published ZIP/v3 manifest and inventory v1/v2 history contracts remain
+compatible; existing snapshots without this optional field still verify.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It
