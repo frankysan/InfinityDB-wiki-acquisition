@@ -234,7 +234,7 @@ def verify_snapshot(
             _require(parent["archiveName"] != archive_name,
                      "Parent snapshot cannot be the resulting archive")
             _require(type(parent["reusedMemberCount"]) is int
-                     and parent["reusedMemberCount"] > 0,
+                     and parent["reusedMemberCount"] >= 0,
                      "Invalid parent reused-member count")
             input_artifact = _object(
                 provenance.get("inputArtifact"), "provenance.inputArtifact",
@@ -243,35 +243,106 @@ def verify_snapshot(
                      and input_artifact.get("sha256") == parent["archiveSha256"],
                      "Provenance inputArtifact does not identify the parent ZIP")
             metadata = _object(document.get("captureMetadata"), "captureMetadata")
-            parent_history = metadata.get("parentHistory", False)
-            reused_revisions = metadata.get("reusedRevisionCount", 0)
-            _require(type(parent_history) is bool
+            if metadata.get("updateMode") == "verified-full-source-refresh":
+                _require(document["history"] is False
+                         and metadata.get("sourceVersionSkipping") is False
+                         and metadata.get("assetVersionComparison")
+                         == "content-hash-after-download",
+                         "Unsupported archive-derived refresh evidence")
+                for key in ("matchedParentMemberCount", "changedMemberCount",
+                            "newMemberCount", "removedMemberCount"):
+                    value = metadata.get(key)
+                    _require(type(value) is int and value >= 0,
+                             f"Invalid archive update count: {key}")
+                _require(
+                    metadata["matchedParentMemberCount"]
+                    == parent["reusedMemberCount"]
+                    and metadata["matchedParentMemberCount"]
+                    + metadata["changedMemberCount"]
+                    + metadata["newMemberCount"] == record["memberCount"],
+                    "Archive update member accounting is inconsistent",
+                )
+                for key in ("pageMovesById", "parentPageIdsAbsentFromEnumeration"):
+                    _require(isinstance(metadata.get(key), list),
+                             f"Invalid archive update evidence: {key}")
+                changes = _object(metadata.get("recentChanges"), "recentChanges")
+                _require(set(changes) == {
+                    "requestedFrom", "requestedThrough", "retentionCoverage",
+                    "observedCount", "events",
+                } and changes["retentionCoverage"] == "unverified",
+                         "RecentChanges cannot certify source retention coverage")
+                recent_events = changes["events"]
+                _require(isinstance(recent_events, list)
+                         and type(changes["observedCount"]) is int
+                         and changes["observedCount"] == len(recent_events),
+                         "RecentChanges count differs from recorded events")
+                start_time = datetime.fromisoformat(
+                    _string(changes["requestedFrom"], "recentChanges.requestedFrom")
+                )
+                end_time = datetime.fromisoformat(
+                    _string(changes["requestedThrough"], "recentChanges.requestedThrough")
+                )
+                _require(all(date.tzinfo is not None and date.utcoffset() is not None
+                             for date in (start_time, end_time))
+                         and start_time <= end_time,
+                         "Invalid RecentChanges requested window")
+                event_ids: set[int] = set()
+                for event in recent_events:
+                    observed = _object(event, "RecentChanges event")
+                    rcid = observed.get("rcid")
+                    timestamp = datetime.fromisoformat(
+                        _string(observed.get("timestamp"), "RecentChanges timestamp")
+                    )
+                    _require(type(rcid) is int and rcid > 0
+                             and rcid not in event_ids
+                             and observed.get("type") in {
+                                 "edit", "new", "log", "categorize", "external",
+                             }
+                             and isinstance(observed.get("title"), str)
+                             and bool(observed["title"])
+                             and timestamp.tzinfo is not None
+                             and timestamp.utcoffset() is not None
+                             and start_time <= timestamp <= end_time,
+                             "Invalid RecentChanges event evidence")
+                    event_ids.add(rcid)
+                parent_time = datetime.fromisoformat(parent["acquiredAt"])
+                current_time = datetime.fromisoformat(record["acquiredAt"])
+                _require(parent_time.tzinfo is not None
+                         and parent_time.utcoffset() is not None
+                         and current_time.tzinfo is not None
+                         and current_time.utcoffset() is not None
+                         and parent_time <= current_time,
+                         "Archive refresh chronology is inconsistent")
+            else:
+                parent_history = metadata.get("parentHistory", False)
+                reused_revisions = metadata.get("reusedRevisionCount", 0)
+                _require(type(parent_history) is bool
                      and type(reused_revisions) is int
                      and 0 <= reused_revisions <= parent["reusedMemberCount"]
                      and (parent_history or reused_revisions == 0),
                      "Invalid inherited historical revision evidence")
-            current_at = _string(
-                metadata.get("currentContentAcquiredAt"), "currentContentAcquiredAt",
-            )
-            _require(document["history"] is True
-                     and (parent_history or current_at == parent["acquiredAt"])
-                     and metadata.get("historyCutoff") == "all-observed",
-                     "Archive-derived current/history acquisition evidence is inconsistent")
-            history_at = _string(
-                metadata.get("historyRetrievedAt"), "historyRetrievedAt",
-            )
-            parent_time = datetime.fromisoformat(parent["acquiredAt"])
-            current_time = datetime.fromisoformat(current_at)
-            history_time = datetime.fromisoformat(history_at)
-            snapshot_time = datetime.fromisoformat(record["acquiredAt"])
-            _require(all(value.tzinfo is not None
-                         and value.utcoffset() is not None
-                         for value in (current_time, parent_time, history_time, snapshot_time))
-                     and current_time <= parent_time <= history_time <= snapshot_time,
-                     "Archive-derived acquisition chronology is inconsistent")
-            max_reused = record["memberCount"] - (1 if parent_history else 2)
-            _require(parent["reusedMemberCount"] <= max_reused,
-                     "Parent reuse count exceeds history snapshot size")
+                current_at = _string(
+                    metadata.get("currentContentAcquiredAt"), "currentContentAcquiredAt",
+                )
+                _require(document["history"] is True
+                         and (parent_history or current_at == parent["acquiredAt"])
+                         and metadata.get("historyCutoff") == "all-observed",
+                         "Archive-derived current/history acquisition evidence is inconsistent")
+                history_at = _string(
+                    metadata.get("historyRetrievedAt"), "historyRetrievedAt",
+                )
+                parent_time = datetime.fromisoformat(parent["acquiredAt"])
+                current_time = datetime.fromisoformat(current_at)
+                history_time = datetime.fromisoformat(history_at)
+                snapshot_time = datetime.fromisoformat(record["acquiredAt"])
+                _require(all(value.tzinfo is not None
+                             and value.utcoffset() is not None
+                             for value in (current_time, parent_time, history_time, snapshot_time))
+                         and current_time <= parent_time <= history_time <= snapshot_time,
+                         "Archive-derived acquisition chronology is inconsistent")
+                max_reused = record["memberCount"] - (1 if parent_history else 2)
+                _require(parent["reusedMemberCount"] <= max_reused,
+                         "Parent reuse count exceeds history snapshot size")
         site_key = _string(document["site"], "inventory.site")
         language = _string(document["language"], "inventory.language")
         # Site definitions are producer-owned; imported lazily to avoid a CLI

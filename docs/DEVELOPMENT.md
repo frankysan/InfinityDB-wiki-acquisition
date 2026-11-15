@@ -115,6 +115,29 @@ Agents start with [AGENTS.md](../AGENTS.md).
   the artifacts, and the v3 `inputArtifact` binds the immediate parent.
   This is not a page-move/current-content refresh mechanism (P2.3) or
   archive-derived checkpoint resume (P2.5).
+- The initial P2.3 `--update-from` path accepts a verified, fully classified
+  **non-history** parent (v3 manifest and v1 inventory), records a paginated
+  RecentChanges scan (retention **unverified**), forces new `allpages`
+  enumeration for the source language, and runs an entirely fresh current
+  page/asset crawl with normal link rewriting and fail-closed publication.
+  Only after fresh bytes are downloaded and SHA-256/size checked against the
+  same parent source URL/path may old ZIP bytes be reused in the child.
+  This conservative operation **does not skip network transfers**: the
+  published parent digest, current page IDs and RecentChanges logs alone
+  cannot establish that a rendered page or binary upload remained unchanged.
+  Compare enumerated numeric page IDs to identify URL changes; corroborate
+  actual moves against RecentChanges move logs where possible, otherwise
+  retain unresolved alias/move status. Record old IDs absent from fresh
+  enumeration as *unresolved*, not automatic deletion
+  claims. Record observed edit/move/delete/upload changes separately and
+  refuse to present an exhausted RecentChanges window as proven retention
+  coverage. New output retains the existing immutable ZIP/v3 manifest/v1
+  inventory contract, explicit `inputArtifact` and parent hashes. This
+  first stage does not update history parents, support interrupted derived
+  resume, avoid refetching unchanged objects, or prove template-dependent
+  render freshness. The remaining P2.3 work is authoritative parent page
+  revision/upload-version capture and conservative network skipping; P2.4
+  owns cross-page render dependency invalidation.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

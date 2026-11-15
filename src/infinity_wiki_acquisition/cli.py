@@ -1474,8 +1474,13 @@ def download_wiki(
     progress: Callable[[WikiCrawlProgress], None] | None = None,
     checkpoint_file: Path | None = None,
     retry_failed_only: bool = False,
+    force_allpages: bool = False,
 ) -> WikiDownloadResult:
-    """Crawl the source or retry recorded failures from a completed discovery."""
+    """Crawl the source or retry recorded failures from a completed discovery.
+
+    Explicit archive updates force main-namespace enumeration even for sites
+    where a normal link crawl starts only from the root.
+    """
     _require_site_language(site, language)
     if not wiki_page_matches_language(base_url, language, site=site):
         raise ValueError(f"Wiki root {base_url!r} does not match language {language!r}")
@@ -1527,10 +1532,10 @@ def download_wiki(
             if url not in pending
         )
     else:
-        phase = "enumerating" if checkpoint_file and site.enumerate_pages else "crawling"
+        phase = "enumerating" if checkpoint_file and (site.enumerate_pages or force_allpages) else "crawling"
         enumeration_continuation = None
         initial_urls = [canonical_base_url]
-        if site.enumerate_pages and checkpoint_file is None:
+        if (site.enumerate_pages or force_allpages) and checkpoint_file is None:
             try:
                 titles = fetch_all_page_titles(language=language, site=site)
             except Exception as exc:  # pragma: no cover - live network failure path.
@@ -1953,15 +1958,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--update-from",
+        type=Path,
+        help=(
+            "Conservatively refresh a verified non-history snapshot: full "
+            "main-namespace discovery and HTTP fetches, then compare and "
+            "reuse byte-identical members; not yet network-incremental"
+        ),
+    )
+    parser.add_argument(
         "--from-manifest",
         type=Path,
-        help="Parent provenance JSON (defaults to --manifest-dir/<parent ZIP stem>.json)",
+        help="Parent provenance JSON for --from-snapshot/--update-from",
     )
     parser.add_argument(
         "--from-inventory",
         type=Path,
         help=(
-            "Parent inventory JSON (defaults to --manifest-dir/inventories/"
+            "Parent inventory JSON for --from-snapshot/--update-from; default under --manifest-dir/inventories/"
             "<parent ZIP stem>.inventory.json)"
         ),
     )
@@ -1992,6 +2006,59 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.update_from is not None:
+        if (args.from_snapshot is not None or args.include_history
+                or args.retry_failed_only or args.resume_work is not None):
+            print(
+                "ERROR: --update-from cannot be combined with --from-snapshot, "
+                "--include-history, --retry-failed-only or --resume-work",
+                file=sys.stderr,
+            )
+            return 1
+        from infinity_wiki_acquisition.snapshot_update import (
+            SnapshotUpdateIncomplete, update_snapshot,
+        )
+
+        parent_zip = args.update_from
+        parent_manifest = (
+            args.from_manifest or args.manifest_dir / f"{parent_zip.stem}.json"
+        )
+        parent_inventory = (
+            args.from_inventory
+            or args.manifest_dir / "inventories" / f"{parent_zip.stem}.inventory.json"
+        )
+        try:
+            updated = update_snapshot(
+                parent_zip, parent_manifest, parent_inventory,
+                archive_directory=args.root,
+                manifest_directory=args.manifest_dir,
+                work_root=args.work_root,
+                expected_site=args.site, expected_language=args.language,
+            )
+        except SnapshotUpdateIncomplete as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            for failure in exc.failures:
+                print(f"  {failure.url}: {failure.error}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            print(
+                "Snapshot update interrupted; preserved work for inspection.",
+                file=sys.stderr,
+            )
+            return 130
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"Updated Wiki snapshot (all remote content rechecked): "
+            f"{updated.reused_members} matching parent members, "
+            f"{updated.changed_members} changed, {updated.new_members} new, "
+            f"{updated.removed_members} removed, "
+            f"{updated.moved_pages} page ID URL changes -> {updated.archive}"
+        )
+        print(f"Snapshot provenance -> {updated.manifest}")
+        print(f"Snapshot inventory -> {updated.inventory}")
+        return 0
     if args.from_snapshot is not None:
         if not args.include_history or args.retry_failed_only or args.resume_work is not None:
             print(
@@ -2040,7 +2107,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Snapshot inventory -> {upgraded.inventory}")
         return 0
     if args.from_manifest is not None or args.from_inventory is not None:
-        print("ERROR: --from-manifest/--from-inventory requires --from-snapshot", file=sys.stderr)
+        print(
+            "ERROR: --from-manifest/--from-inventory requires "
+            "--from-snapshot or --update-from",
+            file=sys.stderr,
+        )
         return 1
     site = WIKI_SITES[args.site or DEFAULT_SITE.key]
     args.language = args.language or "en"

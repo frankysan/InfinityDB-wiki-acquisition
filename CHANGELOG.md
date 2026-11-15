@@ -47,6 +47,17 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added the initial conservative P2.3
+  `infinity-wiki-snapshot --update-from <zip>` workflow for verified
+  non-history snapshot parents. It forces fresh MediaWiki allpages discovery,
+  records paginated RecentChanges as retention-unverified evidence, and
+  reacquires current pages/assets while rewriting their offline links.
+  Identical content is verified against source URL/path and SHA-256 before
+  copying prior ZIP bytes; new, changed and removed member counts and
+  page-ID URL transitions (distinguishing observed moves from unresolved
+  aliases) are recorded in a new verified v1 inventory with parent lineage. Earlier artifacts remain immutable. Network-level skipping
+  based on authoritative revision/upload version evidence and history-parent
+  refreshes remain follow-up work, not falsely claimed optimizations.
 - **Acquisition:** Extended `--from-snapshot --include-history` to verified
   history parents (P2.2). Previously archived oldid HTML is reused only
   after a fresh MediaWiki revision enumeration confirms its immutable

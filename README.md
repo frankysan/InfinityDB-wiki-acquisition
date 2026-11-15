@@ -115,8 +115,8 @@ If an oldid changes identity, a prior oldid disappears from enumeration, or
 a recorded page/oldid association disappears, publication is blocked pending
 explicit reconciliation. A matching numeric oldid alone never proves a
 previously unseen URL is an alias. Current HTML/assets are never refreshed
-by this command; new or moved current pages belong to the later
-`--update-from` work (P2.3).
+by this command; the separate `--update-from` path handles current-content
+refreshes (P2.3).
 
 The original files never change. The new v3 manifest records the parent ZIP
 as `inputArtifact`, and the v1 inventory records the exact parent ZIP,
@@ -150,6 +150,56 @@ On a required revision failure, no ZIP/manifest/inventory is published.
 The staging directory and history checkpoint are preserved for inspection,
 but `--resume-work` and `--retry-failed-only` cannot be combined with
 `--from-snapshot` yet; archive-derived resume is scheduled for P2.5.
+
+### Refresh a completed current-content snapshot (P2.3, conservative stage)
+
+A verified **non-history** ZIP with matching v3 provenance and v1 inventory
+can now seed a separate current-content refresh:
+
+```powershell
+infinity-wiki-snapshot --update-from "local/data/wiki/HUMAN-SPHERE 20261001-120000.zip"
+```
+
+As with `--from-snapshot`, the default parent JSON paths are resolved below
+`--manifest-dir`; `--from-manifest` and `--from-inventory` override those
+inputs. The source site/language are inferred and explicit mismatches fail
+before any network requests. `--update-from` cannot be combined with
+`--include-history`, `--from-snapshot`, `--resume-work`, or
+`--retry-failed-only`. History-parent updates are not yet supported.
+
+**This stage is conservative, not bandwidth-incremental.** The producer
+first verifies all parent artifacts, then requests an auditable MediaWiki
+RecentChanges window and a **fresh, paginated allpages enumeration**, even
+on sites that do not normally enumerate main-namespace pages. It then
+refetches all current pages and discovered assets using the existing
+crawler; rendered HTML is rewritten from the new source response to local
+paths. Each newly acquired member is compared with the verified parent
+source URL/path and SHA-256; matching bytes are copied from the parent ZIP
+before the new archive is built. No page or asset HTTP download is skipped
+on the strength of a filename, an unchanged page ID, or stale metadata.
+Required source failures block publication and preserve the work directory.
+
+A new complete ZIP, matching v3 manifest (including parent
+`inputArtifact`), and independently verified v1 inventory are published
+without modifying the previous artifacts. The inventory retains the parent
+ZIP/manifest/inventory hashes, member-change counts, URL-association changes for stable numeric
+MediaWiki IDs (distinguishing RecentChanges-corroborated moves from
+unresolved aliases), parent IDs missing from the fresh
+enumeration, and the observed RecentChanges events. A missing ID is
+**not** unconditionally labeled a deletion; it might instead reflect a
+namespace change, visibility restriction or ambiguous source state.
+RecentChanges continuation is checked, but
+`retentionCoverage: unverified` is mandatory: even a paginated complete
+response cannot prove how far the Wiki retains older changes.
+
+**Outstanding P2.3 optimization:** authoritative captured current-revision
+IDs and upload hashes/timestamps are not consistently available in parent
+inventories. Those must be established and cross-checked before skipping
+transfers. Until then, this command deliberately reacquires source bytes.
+It does not guarantee that an entire multi-request crawl represents one
+atomic instant, or that a page's template/module dependencies are unchanged
+(P2.4). Updating history-enabled parents and resuming interrupted
+archive-derived work also remain pending.
 
 ### Resume historical revisions
 
