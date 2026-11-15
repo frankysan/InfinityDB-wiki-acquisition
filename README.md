@@ -349,6 +349,41 @@ The negative P2.4c.1 gate, full rediscovery and refetch behavior remain
 unchanged. Older v1/v2 inventories and existing history associations
 remain compatible.
 
+**Original HTML replay companion (P2.4c.2b.1):** To preserve complete,
+replayable source HTML alongside a new acquisition, opt in with
+`--source-replay-dir local/data/wiki-source-replay`. This works for fresh
+acquisitions and `--update-from`, including history-enabled updates.
+Each current HTML page is still fetched over HTTP. The option retains
+the exact pre-rewrite HTML privately during crawling and, after the
+main snapshot verifies, publishes a **separate**
+`<archive stem>.source-replay.zip` in the selected directory.
+It does not add source bytes to the existing snapshot ZIP and does not
+change the v3 manifest or inventory v1/v2 structure.
+
+The companion's versioned `index.json` binds the main ZIP, manifest
+and inventory SHA-256s to each original source URL, raw HTML hash,
+rewritten archive member hash, and the complete source-link extraction
+digest/count. `verify_source_replay_bundle(bundle, archive, manifest,
+inventory)` checks the original page bytes and deterministically
+re-runs source link extraction and HTML rewriting against every
+current-page member. Missing, altered, extra or inconsistent members
+fail verification. Historical oldids and v2 historical-only pages are
+**not** claimed to have newly fetched current HTML. The private original
+bodies are not left in successfully cleaned work directories; the
+separate companion is the portable artifact. When resuming an existing
+crawl, request this option from the start: saved pages without their
+original body files cannot be reconstructed from rewritten HTML.
+
+This companion is optional; existing snapshot consumers require only
+the original ZIP, manifest and inventory. A standalone
+`verify_conditional_html_304` helper can validate a synthetic/observed
+HTTP 304 against a fully verified parent and original-byte replay, with
+strict exact URL, profile and strong-ETag requirements. It **never
+authorizes reuse**: the negative render-reuse gate, full current-page
+redownload, fresh discovery and source-time limitations remain unchanged.
+`--from-snapshot --include-history` does not fetch current pages, so
+it cannot create a new replay companion from that operation.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It

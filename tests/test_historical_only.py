@@ -23,7 +23,7 @@ from test_snapshot_update import (
 )
 
 
-def _retired_update(tmp_path, monkeypatch):
+def _retired_update(tmp_path, monkeypatch, *, source_replay_directory=None):
     parent = _history_parent(tmp_path, monkeypatch)
     _remote(monkeypatch, changed=True)
     _history_source(
@@ -39,6 +39,7 @@ def _retired_update(tmp_path, monkeypatch):
         manifest_directory=tmp_path / "v2-manifests",
         work_root=tmp_path / "v2-work",
         now=NEW_TIME, allow_historical_only=True,
+        source_replay_directory=source_replay_directory,
     )
     return parent, result
 
@@ -111,6 +112,30 @@ def test_opt_in_retains_deleted_html_and_revision_under_v2_not_current(
         "historicalOnlyPageCount"
     ] == 1
     # Parent untouched and still independently verifiable.
+    assert verify_snapshot(*parent)["formatVersion"] == 1
+
+
+def test_v2_source_replay_only_includes_current_html(tmp_path, monkeypatch):
+    from infinity_wiki_acquisition.source_replay import (
+        verify_source_replay_bundle,
+    )
+
+    parent, child = _retired_update(
+        tmp_path, monkeypatch,
+        source_replay_directory=tmp_path / "replay-v2",
+    )
+    assert child.source_replay is not None
+    replay = verify_source_replay_bundle(
+        child.source_replay, child.archive, child.manifest, child.inventory,
+    )
+    checked = verify_snapshot(child.archive, child.manifest, child.inventory)
+    assert checked["formatVersion"] == 2
+    assert len(replay["pages"]) == sum(
+        row["kind"] == "current-page" for row in checked["members"]
+    )
+    assert all(row["pageUrl"] != DELETED for row in replay["pages"])
+    assert all(not row["rawMember"].startswith("_history/")
+               for row in replay["pages"])
     assert verify_snapshot(*parent)["formatVersion"] == 1
 
 

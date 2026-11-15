@@ -47,6 +47,14 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added opt-in P2.4c.2b.1 original-current-HTML replay
+  companion ZIPs (`--source-replay-dir`) for fresh/updated snapshots.
+  Versioned companion evidence binds raw source bytes, complete source-link
+  discovery and deterministic rewriting to the verified ZIP/v3 manifest
+  and v1/v2 inventory without altering those contracts. Strict standalone
+  HTTP 304 checks require matching verified parent bytes, URL, request
+  profile and strong ETag but do not authorize rendered HTML reuse.
+  Full current-HTML refetch and conservative invalidation remain unchanged.
 - **Acquisition:** Added P2.4c.2a per-current-page HTTP representation and
   HTML transformation provenance in optional inventory fields: observed
   status/URL, ETag/Last-Modified, source/rewritten hashes, configured request

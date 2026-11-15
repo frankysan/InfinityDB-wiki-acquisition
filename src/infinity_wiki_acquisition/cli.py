@@ -1526,6 +1526,7 @@ def download_wiki(
     retry_failed_only: bool = False,
     force_allpages: bool = False,
     asset_fetch: Callable[[str], bytes] | None = None,
+    retain_source_html: bool = False,
 ) -> WikiDownloadResult:
     """Crawl the source or retry recorded failures from a completed discovery.
 
@@ -1862,6 +1863,10 @@ def download_wiki(
 
         parser = LinkExtractor()
         parser.feed(text)
+        if retain_source_html:
+            from infinity_wiki_acquisition.source_replay import write_source_body
+
+            write_source_body(destination, url, bytes(payload))
         if checkpoint_file is not None:
             evidence = build_page_evidence(
                 url=url,
@@ -1998,6 +2003,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory used to store timestamped wiki ZIP snapshots (default: local/data/wiki)",
     )
     parser.add_argument(
+        "--source-replay-dir",
+        type=Path,
+        help=(
+            "Opt-in separate ZIP companion of original current-page HTML, "
+            "for independently verified offline link/discovery replay. "
+            "Does not enable HTML download skipping; unavailable with --from-snapshot."
+        ),
+    )
+    parser.add_argument(
         "--work-root",
         type=Path,
         default=Path("local/work/wiki"),
@@ -2117,6 +2131,8 @@ def main(argv: list[str] | None = None) -> int:
                 expected_site=args.site, expected_language=args.language,
                 require_history=args.include_history,
                 allow_historical_only=args.allow_historical_only,
+                **({"source_replay_directory": args.source_replay_dir}
+                   if args.source_replay_dir is not None else {}),
             )
         except SnapshotUpdateIncomplete as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -2154,6 +2170,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         print(f"Snapshot provenance -> {updated.manifest}")
         print(f"Snapshot inventory -> {updated.inventory}")
+        if updated.source_replay is not None:
+            print(f"Original HTML replay companion -> {updated.source_replay}")
         return 0
     if args.allow_historical_only:
         print(
@@ -2162,6 +2180,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     if args.from_snapshot is not None:
+        if args.source_replay_dir is not None:
+            print(
+                "ERROR: --source-replay-dir requires fresh current HTML acquisition, "
+                "not --from-snapshot history-only upgrade",
+                file=sys.stderr,
+            )
+            return 1
         if not args.include_history or args.retry_failed_only or args.resume_work is not None:
             print(
                 "ERROR: --from-snapshot requires --include-history and cannot "
@@ -2231,6 +2256,7 @@ def main(argv: list[str] | None = None) -> int:
     archive: Path | None = None
     manifest: Path | None = None
     inventory: Path | None = None
+    source_replay: Path | None = None
     staging_path: Path | None = None
     history_result: WikiHistoryResult | None = None
     progress = ConsoleProgressReporter()
@@ -2261,6 +2287,8 @@ def main(argv: list[str] | None = None) -> int:
                 progress=progress,
                 checkpoint_file=staging_path / CHECKPOINT_FILENAME,
                 retry_failed_only=args.retry_failed_only,
+                **({"retain_source_html": True}
+                   if args.source_replay_dir is not None else {}),
             )
         finally:
             progress.finish()
@@ -2361,7 +2389,17 @@ def main(argv: list[str] | None = None) -> int:
             pages=result.pages,
             crawl_checkpoint=staging_path / CHECKPOINT_FILENAME,
         )
+        if args.source_replay_dir is not None:
+            from infinity_wiki_acquisition.source_replay import (
+                create_source_replay_bundle,
+            )
+
+            source_replay = create_source_replay_bundle(
+                staging_path, archive, manifest, inventory, args.source_replay_dir,
+            )
     except KeyboardInterrupt:
+        if source_replay is not None:
+            source_replay.unlink(missing_ok=True)
         if inventory is not None:
             inventory.unlink(missing_ok=True)
         if manifest is not None:
@@ -2373,6 +2411,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Preserved wiki work -> {staging_path}", file=sys.stderr)
         return 130
     except (OSError, ValueError) as exc:
+        if source_replay is not None:
+            source_replay.unlink(missing_ok=True)
         if inventory is not None:
             inventory.unlink(missing_ok=True)
         if manifest is not None:
@@ -2401,6 +2441,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Ignored {len(result.ignored)} optional site URL(s).")
     print(f"Snapshot provenance -> {manifest}")
     print(f"Snapshot inventory -> {inventory}")
+    if source_replay is not None:
+        print(f"Original HTML replay companion -> {source_replay}")
     return 0
 
 

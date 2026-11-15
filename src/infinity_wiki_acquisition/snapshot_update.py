@@ -57,6 +57,7 @@ class SnapshotUpdateResult(NamedTuple):
     history_revisions: int = 0
     reused_revisions: int = 0
     historical_only_pages: int = 0
+    source_replay: Path | None = None
 
 
 def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -283,6 +284,7 @@ def update_snapshot(
     progress: Any = None,
     require_history: bool = False,
     allow_historical_only: bool = False,
+    source_replay_directory: Path | None = None,
 ) -> SnapshotUpdateResult:
     """Refresh current content and publish a new independently verified snapshot.
 
@@ -337,6 +339,7 @@ def update_snapshot(
     archive: Path | None = None
     manifest: Path | None = None
     inventory: Path | None = None
+    source_replay: Path | None = None
     try:
         if progress is None:
             progress = cli.ConsoleProgressReporter()
@@ -443,6 +446,8 @@ def update_snapshot(
                     checkpoint_file=work / CHECKPOINT_FILENAME,
                     progress=progress, force_allpages=True,
                     asset_fetch=fetch_asset,
+                    **({"retain_source_html": True}
+                       if source_replay_directory is not None else {}),
                 )
             finally:
                 if hasattr(progress, "finish"):
@@ -704,7 +709,17 @@ def update_snapshot(
         inventory = _publish_verified_inventory(
             updated, archive, manifest, manifest_directory / "inventories",
         )
+        if source_replay_directory is not None:
+            from infinity_wiki_acquisition.source_replay import (
+                create_source_replay_bundle,
+            )
+
+            source_replay = create_source_replay_bundle(
+                work, archive, manifest, inventory, source_replay_directory,
+            )
     except BaseException:
+        if source_replay is not None:
+            source_replay.unlink(missing_ok=True)
         if inventory is not None:
             inventory.unlink(missing_ok=True)
         if manifest is not None:
@@ -723,4 +738,5 @@ def update_snapshot(
         history_result.revision_count if history_result is not None else 0,
         len(oldids_reused),
         len(former_records),
+        source_replay,
     )

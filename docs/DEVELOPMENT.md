@@ -324,12 +324,39 @@ Agents start with [AGENTS.md](../AGENTS.md).
   their original acquisition evidence; historical-only pages/oldids do
   not acquire new current-response claims.
 
-  P2.4c.2b must establish a portable original-body or complete discovery
-  reference representation (normal navigation links are not in source
-  inventory), plus independently checked HTTP conditional revalidation,
-  deterministic rewrite replay and full publication/resume compatibility.
-  A matching recorded strong ETag alone is insufficient. Do not
-  conditionally skip HTML yet.
+  P2.4c.2b.1 adds opt-in `--source-replay-dir` to normal fresh and
+  update acquisitions. The crawler atomically stores each exact pre-rewrite
+  current-page HTTP body in private `.wiki-original-html/<SHA-256 URL>.html`,
+  never in the normal mirror file set or existing ZIP. On success, after
+  independent verification of the ZIP, v3 manifest and v1/v2 inventory,
+  `create_source_replay_bundle` generates a separate versioned companion
+  ZIP. Its `index.json` binds those three artifact hashes, original URL,
+  raw HTML SHA-256, rewritten member identity/hash and complete raw
+  LinkExtractor source-link count/digest, including ordinary navigation
+  that the primary inventory intentionally excludes. The independent
+  `verify_source_replay_bundle` checks every raw ZIP member, recomputes
+  full source-link extraction, reruns the exact HTML rewrite, and compares
+  bytes to the independently validated snapshot ZIP members. It does not
+  use network access or grant rendered freshness. Raw source bodies are
+  streamed into the companion to avoid retaining the entire crawl in RAM.
+  Failed or missing original body evidence refuses a partial companion and
+  retracts that run's new published snapshot artifacts. Preserve work on
+  failure; successful work cleanup does not discard the independent
+  companion. Retired/historical-only members and oldids are out of scope.
+  Since `--from-snapshot --include-history` does not fetch current pages,
+  it cannot create a new companion from earlier archived rewritten HTML.
+
+  `verify_conditional_html_304` is a separate *non-authorizing* offline
+  check: it first verifies the parent archive, inventory, manifest and raw
+  replay companion, then requires an exact matching URL, strong ETag, GET
+  request+rewrite profile, HTTP 304 status/effective URL, empty body and
+  corresponding conditional request/response ETags. Any difference fails.
+  Its result explicitly sets `reuseAuthorized=false` because independent
+  rendered-dependency/source-time consistency and full variant coverage
+  are still missing. No crawler supplies `If-None-Match` for current HTML.
+  A separately versioned positive gate is required for actual skips
+  (P2.4c.2b.2). Old archives remain compatible with the original required
+  three-file verification; companion validation is opt-in and independent.
 
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
