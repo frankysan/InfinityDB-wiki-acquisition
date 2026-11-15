@@ -1,11 +1,9 @@
-"""Conservative P2.3 archive-derived refresh of current Wiki snapshots.
+"""P2.3 archive-derived current Wiki refresh with verified asset-version reuse.
 
-A verified parent is used as a byte-level comparison baseline, never as
-unverified evidence that remote content has remained unchanged. Every source
-member in the new output is freshly crawled and checksummed. Identical bytes
-are copied from the parent ZIP to establish exact reuse. This first stage
-does not claim to avoid HTTP downloads; source-version based skipping is
-blocked until authoritative page/asset version baselines exist.
+Rendered pages are always fetched and mirrored again. Original MediaWiki
+uploads may be reused after matching remote imageinfo SHA-1, size and URL
+against the fully verified parent bytes; other assets can use strong HTTP
+ETag/304 revalidation. Unknown versions never authorize a transfer skip.
 """
 
 from __future__ import annotations
@@ -261,12 +259,12 @@ def update_snapshot(
     expected_language: str | None = None,
     progress: Any = None,
 ) -> SnapshotUpdateResult:
-    """Reacquire current content and publish a new independently verified snapshot.
+    """Refresh current content and publish a new independently verified snapshot.
 
-    This is a conservative baseline. It performs full current-page and asset
-    fetches rather than silently trusting absent revision/upload metadata.
-    Allpages enumeration is forced to discover current main-namespace titles
-    and compare recorded numeric page identities.
+    Fresh allpages and current HTML fetching always run. Only original uploads
+    with independently matching MediaWiki SHA-1/size/URL, or assets with
+    current strong HTTP 304 validation, can skip a binary response body.
+    No HTML content is skipped based on its page revision identity.
     """
     from infinity_wiki_acquisition import cli
 
@@ -304,15 +302,113 @@ def update_snapshot(
     try:
         if progress is None:
             progress = cli.ConsoleProgressReporter()
-        try:
-            fresh = cli.download_wiki(
-                site.root_urls[language], work, site=site, language=language,
-                checkpoint_file=work / CHECKPOINT_FILENAME,
-                progress=progress, force_allpages=True,
-            )
-        finally:
-            if hasattr(progress, "finish"):
-                progress.finish()
+        conditionally_reused_urls: set[str] = set()
+        upload_sha1_reused_urls: set[str] = set()
+        upload_versions: dict[str, dict[str, Any]] = {}
+        from infinity_wiki_acquisition.mediawiki_uploads import read_current_upload
+
+        with zipfile.ZipFile(source_archive) as source_zip:
+            def fetch_asset(url: str) -> bytes:
+                previous = previous_by_url.get(url)
+                version = previous.get("sourceVersion") if previous else None
+                same_parent_source = (
+                    previous is not None
+                    and previous["kind"] == "asset"
+                    and previous["sourceUrls"] == [url]
+                    and previous["path"] == cli.local_relative_path(
+                        url, asset=True, site=site,
+                    )
+                )
+                # Only direct original upload URLs with an exact same URL
+                # returned by MediaWiki imageinfo qualify. Thumbnails,
+                # external CDNs and missing API versions fall back safely.
+                upload = read_current_upload(url, site=site, language=language)
+                if upload is not None and same_parent_source:
+                    prior_bytes = source_zip.read(previous["path"])
+                    if (len(prior_bytes) == upload["size"]
+                            and hashlib.sha1(prior_bytes).hexdigest()
+                            == upload["sha1Hex"]):
+                        upload_versions[url] = {**upload, "usedForReuse": True}
+                        upload_sha1_reused_urls.add(url)
+                        return prior_bytes
+
+                def checked_body(payload: bytes) -> bytes:
+                    if upload is not None:
+                        if (len(payload) != upload["size"]
+                                or hashlib.sha1(payload).hexdigest()
+                                != upload["sha1Hex"]):
+                            raise ValueError(
+                                f"MediaWiki upload changed between imageinfo "
+                                f"and body acquisition: {url}"
+                            )
+                        upload_versions[url] = {
+                            **upload, "usedForReuse": False,
+                        }
+                    return payload
+
+                # If the new MediaWiki upload identity is definitely different
+                # from archived bytes, a stale HTTP 304 must not override it.
+                if upload is not None:
+                    return checked_body(
+                        cli.fetch_site_bytes(url, language=language, site=site),
+                    )
+
+                # A strong ETag applies to one exact request URL/representation.
+                # Never infer an unchanged asset from filenames, weak ETags,
+                # timestamps, or a redirect to another effective URL.
+                if (
+                    same_parent_source
+                    and isinstance(version, dict)
+                    and version.get("sourceUrl") == url
+                    and version.get("effectiveUrl") == url
+                    and version.get("sha256") == previous["sha256"]
+                    and version.get("responseStatus") in (200, 304)
+                    and cli._is_strong_etag(version.get("strongEtag"))
+                ):
+                    validator = version["strongEtag"]
+                    checked = cli.fetch_site_bytes(
+                        url, language=language, site=site,
+                        if_none_match=validator,
+                    )
+                    if getattr(checked, "http_status", None) == 304:
+                        if (
+                            getattr(checked, "etag", None) != validator
+                            or getattr(checked, "conditional_etag", None) != validator
+                            or getattr(checked, "effective_url", None) != url
+                            or len(checked) != 0
+                        ):
+                            raise ValueError(
+                                f"Conditional asset response lacks matching "
+                                f"strong ETag or stable URL: {url}"
+                            )
+                        conditionally_reused_urls.add(url)
+                        return cli.WikiFetchedBytes(
+                            source_zip.read(previous["path"]),
+                            effective_url=url, http_status=304,
+                            etag=validator,
+                            last_modified=getattr(
+                                checked, "last_modified", None,
+                            ),
+                            conditional_etag=validator,
+                        )
+                    # A 200 means the server did not validate the old bytes,
+                    # even if the ETag text happens to be unchanged.
+                    return checked
+                return cli.fetch_site_bytes(
+                    url, language=language, site=site,
+                )
+
+            try:
+                fresh = cli.download_wiki(
+                    site.root_urls[language], work,
+                    site=site, language=language,
+                    checkpoint_file=work / CHECKPOINT_FILENAME,
+                    progress=progress, force_allpages=True,
+                    asset_fetch=fetch_asset,
+                )
+            finally:
+                if hasattr(progress, "finish"):
+                    progress.finish()
         if fresh.failures:
             raise SnapshotUpdateIncomplete(work, fresh.failures)
         if not fresh.files or not fresh.pages:
@@ -334,8 +430,9 @@ def update_snapshot(
             raise ValueError(
                 "MediaWiki allpages did not provide page IDs for an identity-based update"
             )
-        # Whole-state fresh fetch has independently verified bytes for each
-        # URL. Reuse exact parent bytes *only after* hashing fresh content.
+        # Every member is now backed by freshly fetched bytes OR an explicit
+        # remote version validation against verified parent ZIP content.
+        # Recopy only matching members to maintain exact parent bytes.
         reused_paths: set[str] = set()
         with zipfile.ZipFile(source_archive) as previous_zip:
             for url, saved in state["saved"].items():
@@ -369,6 +466,26 @@ def update_snapshot(
             include_history=False, pages=fresh.pages,
             crawl_checkpoint=work / CHECKPOINT_FILENAME,
         )
+        saved_uploads: set[str] = set()
+        for member in updated["members"]:
+            urls = member["sourceUrls"]
+            if member["kind"] != "asset" or len(urls) != 1:
+                continue
+            upload = upload_versions.get(urls[0])
+            if upload is None:
+                continue
+            contents = work.joinpath(*member["path"].split("/")).read_bytes()
+            if (len(contents) != upload["size"]
+                    or hashlib.sha1(contents).hexdigest() != upload["sha1Hex"]):
+                raise ValueError(
+                    f"Uploaded asset identity is inconsistent with published "
+                    f"bytes: {member['path']}"
+                )
+            member["uploadVersion"] = upload
+            if upload["usedForReuse"]:
+                saved_uploads.add(urls[0])
+        if saved_uploads != upload_sha1_reused_urls:
+            raise ValueError("MediaWiki upload reuse has inconsistent evidence")
         old_members_by_path = {
             member["path"]: member for member in parent["members"]
         }
@@ -379,12 +496,25 @@ def update_snapshot(
         added = new_paths - old_paths
         removed = old_paths - new_paths
         moved, absent = _page_changes(parent, updated, changes["events"])
+        validated_assets = {
+            member["sourceVersion"]["sourceUrl"]
+            for member in updated["members"]
+            if member["kind"] == "asset"
+            and member.get("sourceVersion", {}).get("conditionalRevalidated")
+        }
+        if validated_assets != conditionally_reused_urls:
+            raise ValueError(
+                "Conditional asset reuse has inconsistent response evidence"
+            )
         updated["captureMetadata"] = {
             **updated["captureMetadata"],
-            "updateMode": "verified-full-source-refresh",
-            "sourceVersionSkipping": False,
-            "pageRevisionComparison": "unavailable-without-authoritative-parent-baseline",
-            "assetVersionComparison": "content-hash-after-download",
+            "updateMode": "verified-asset-version-refresh",
+            "sourceVersionSkipping": bool(validated_assets or saved_uploads),
+            "conditionalReusedAssetCount": len(validated_assets),
+            "uploadSha1ReusedAssetCount": len(saved_uploads),
+            "uploadVersionEvidenceCount": len(upload_versions),
+            "pageRevisionComparison": "not-safe-for-rendered-html",
+            "assetVersionComparison": "strong-etag-304-or-imageinfo-sha1-or-body-hash",
             "matchedParentMemberCount": len(matched),
             "changedMemberCount": len(changed),
             "newMemberCount": len(added),

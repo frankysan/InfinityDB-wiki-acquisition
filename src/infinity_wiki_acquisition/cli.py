@@ -183,10 +183,15 @@ class WikiFetchedBytes(bytes):
 
     def __new__(
         cls, data: bytes, *, effective_url: str, http_status: int | None,
+        etag: str | None = None, last_modified: str | None = None,
+        conditional_etag: str | None = None,
     ) -> "WikiFetchedBytes":
         instance = bytes.__new__(cls, data)
         instance.effective_url = effective_url
         instance.http_status = http_status
+        instance.etag = etag
+        instance.last_modified = last_modified
+        instance.conditional_etag = conditional_etag
         return instance
 
 
@@ -1295,31 +1300,70 @@ def _retryable_fetch_error(exc: BaseException) -> bool:
     return isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError))
 
 
-def fetch_bytes(url: str, *, language: str = "en") -> bytes:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": USER_AGENT,
-            "Accept": (
-                "*/*"
-                if is_asset_url(url)
-                else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            ),
-            "Accept-Language": _site_accept_language(language),
-            "Connection": "keep-alive",
-        },
+def _is_strong_etag(value: object) -> bool:
+    """Accept only an unambiguous, quoted, non-weak HTTP entity tag."""
+    return (
+        isinstance(value, str)
+        and len(value) >= 3
+        and value[0] == '"'
+        and value[-1] == '"'
+        and all(0x21 <= ord(char) <= 0x7E and char != '"' for char in value[1:-1])
     )
+
+
+def fetch_bytes(
+    url: str, *, language: str = "en",
+    if_none_match: str | None = None,
+) -> bytes:
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": (
+            "*/*"
+            if is_asset_url(url)
+            else "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        ),
+        "Accept-Language": _site_accept_language(language),
+        "Connection": "keep-alive",
+    }
+    if if_none_match is not None:
+        if not _is_strong_etag(if_none_match):
+            raise ValueError("Only strong HTTP ETags may be used for conditional reuse")
+        headers["If-None-Match"] = if_none_match
+    request = urllib.request.Request(url, headers=headers)
     for attempt in range(FETCH_ATTEMPTS):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 getter = getattr(response, "geturl", None)
                 effective = getter() if callable(getter) else url
                 status = getattr(response, "status", None)
+                response_headers = getattr(response, "headers", None)
                 return WikiFetchedBytes(
                     response.read(),
                     effective_url=effective if isinstance(effective, str) else url,
                     http_status=status if type(status) is int else None,
+                    etag=response_headers.get("ETag") if response_headers else None,
+                    last_modified=(
+                        response_headers.get("Last-Modified")
+                        if response_headers else None
+                    ),
+                    conditional_etag=if_none_match,
                 )
+        except urllib.error.HTTPError as exc:
+            if exc.code == 304 and if_none_match is not None:
+                response_headers = exc.headers
+                return WikiFetchedBytes(
+                    b"", effective_url=exc.geturl(),
+                    http_status=304,
+                    etag=response_headers.get("ETag") if response_headers else None,
+                    last_modified=(
+                        response_headers.get("Last-Modified")
+                        if response_headers else None
+                    ),
+                    conditional_etag=if_none_match,
+                )
+            if not _retryable_fetch_error(exc) or attempt >= FETCH_ATTEMPTS - 1:
+                raise
+            time.sleep(FETCH_RETRY_DELAYS[attempt])
         except Exception as exc:
             if not _retryable_fetch_error(exc) or attempt >= FETCH_ATTEMPTS - 1:
                 raise
@@ -1332,11 +1376,16 @@ def fetch_site_bytes(
     *,
     language: str,
     site: WikiSite = DEFAULT_SITE,
+    if_none_match: str | None = None,
 ) -> bytes:
     """Fetch one site URL, applying any source-specific courtesy delay."""
     _require_site_language(site, language)
     if site.request_delay_seconds:
         time.sleep(site.request_delay_seconds)
+    if if_none_match is not None:
+        return fetch_bytes(
+            url, language=language, if_none_match=if_none_match,
+        )
     return fetch_bytes(url, language=language)
 
 
@@ -1475,6 +1524,7 @@ def download_wiki(
     checkpoint_file: Path | None = None,
     retry_failed_only: bool = False,
     force_allpages: bool = False,
+    asset_fetch: Callable[[str], bytes] | None = None,
 ) -> WikiDownloadResult:
     """Crawl the source or retry recorded failures from a completed discovery.
 
@@ -1724,7 +1774,10 @@ def download_wiki(
             )
 
         try:
-            payload = fetch_site_bytes(url, language=language, site=site)
+            payload = (
+                asset_fetch(url) if asset and asset_fetch is not None
+                else fetch_site_bytes(url, language=language, site=site)
+            )
         except Exception as exc:  # pragma: no cover - network failures are expected in real use.
             failure_ignore_reason = ignored_fetch_failure_reason(
                 exc,
@@ -1748,6 +1801,14 @@ def download_wiki(
         write_bytes(target, payload)
         saved.add(target)
         saved_records[url] = [relative, target.stat().st_size]
+        if asset and checkpoint_file is not None:
+            from infinity_wiki_acquisition.asset_evidence import (
+                build_asset_evidence, write_asset_evidence,
+            )
+
+            observed = build_asset_evidence(url, relative, payload)
+            if observed is not None:
+                write_asset_evidence(destination, observed)
 
         if existing_checkpoint and asset and old_asset != asset:
             _rewrite_reclassified_page_references(
@@ -2050,7 +2111,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
         print(
-            f"Updated Wiki snapshot (all remote content rechecked): "
+            f"Updated Wiki snapshot (pages refetched; assets verified or downloaded): "
             f"{updated.reused_members} matching parent members, "
             f"{updated.changed_members} changed, {updated.new_members} new, "
             f"{updated.removed_members} removed, "

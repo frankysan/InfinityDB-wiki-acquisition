@@ -47,6 +47,26 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Extended P2.3b with MediaWiki original-upload version
+  verification using the Action API's latest `prop=imageinfo` SHA-1,
+  size, timestamp and exact URL. An unchanged original upload can now reuse
+  bytes from an independently verified parent ZIP without requesting the
+  binary body, even when no HTTP ETag exists. Changed uploads are fetched
+  and checked against freshly observed imageinfo hashes; ambiguous metadata,
+  thumbnails and external assets never authorize reuse. Optional per-member
+  `uploadVersion` evidence and reuse counts are checked against actual
+  ZIP bytes by the offline snapshot verifier. Rendered HTML and historical
+  dependencies remain conservative; current-page revision tracking is next.
+- **Acquisition:** Added P2.3b.1 asset-level HTTP version evidence and
+  conditional byte reuse to `--update-from`. HTTP 200 asset responses can
+  retain strong ETag, Last-Modified and effective URL in private work
+  evidence and an optional member-bound v1 inventory `sourceVersion`.
+  Later updates send `If-None-Match` for a matching verified parent asset
+  and accept old ZIP bytes only after an exact, strong HTTP 304 validation.
+  The verifier checks member hashes, validator evidence and conditional
+  reuse counts; normal source fetches remain compatible with older inventories.
+  Rendered HTML is still refetched, while MediaWiki upload SHA-1/version
+  and current-revision metadata collection remain pending P2.3b.
 - **Acquisition:** Added the initial conservative P2.3
   `infinity-wiki-snapshot --update-from <zip>` workflow for verified
   non-history snapshot parents. It forces fresh MediaWiki allpages discovery,

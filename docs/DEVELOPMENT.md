@@ -133,11 +133,53 @@ Agents start with [AGENTS.md](../AGENTS.md).
   refuse to present an exhausted RecentChanges window as proven retention
   coverage. New output retains the existing immutable ZIP/v3 manifest/v1
   inventory contract, explicit `inputArtifact` and parent hashes. This
-  first stage does not update history parents, support interrupted derived
-  resume, avoid refetching unchanged objects, or prove template-dependent
-  render freshness. The remaining P2.3 work is authoritative parent page
-  revision/upload-version capture and conservative network skipping; P2.4
-  owns cross-page render dependency invalidation.
+  initial baseline does not update history parents, support interrupted
+  derived resume, or prove template-dependent render freshness.
+- The first P2.3b improvement records optional original asset HTTP
+  `sourceVersion` evidence bound to a source URL and archived member SHA-256.
+  Unredirected HTTP 200 responses may retain **strong** ETags in private
+  `.wiki-asset-evidence/` sidecars and published v1 inventory fields.
+  The updater can offer `If-None-Match` only against a verified parent
+  asset with that exact URL, member path, previous digest, strong ETag and
+  matching effective URL. An HTTP 304 is reusable only with the *same*
+  strong ETag, requested effective URL and an empty body. Copy the bytes
+  from the verified parent ZIP and record `responseStatus: 304` and
+  `conditionalRevalidated: true` against the child asset. A 200 or
+  missing/weak/redirected validator never establishes unchanged content:
+  download the new bytes and verify their format as usual. Contradictory
+  304 evidence blocks reuse, never silently certifies stale bytes.
+  Capture cache headers when available on fresh normal crawls too; legacy
+  inventory records without HTTP validators remain valid and fall back
+  to downloading. Track actual body transfers avoided through
+  `conditionalReusedAssetCount` and `sourceVersionSkipping`; always
+  fetch and rewrite current-page HTML because unchanged source revision IDs
+  cannot prove unchanged template/module-rendered output (P2.4).
+  An HTTP 304 validates a representation at request time; it cannot prove
+  overall multi-request Wiki consistency, a complete RecentChanges window,
+  or the original upload's MediaWiki SHA-1/version timestamp.
+- P2.3b also uses the MediaWiki Action API `prop=imageinfo` for eligible
+  *original* uploads, not thumbnails or third-party hosts. Request one latest
+  imageinfo record with source URL, SHA-1, size and upload timestamp; reject
+  missing/mismatched titles, URLs, checksum formats, sizes and timestamps as
+  **unknown**, then fall back to a normal download. Imageinfo SHA-1 is a
+  MediaWiki-native checksum (often base36), normalized to 40-character hex.
+  A verified parent ZIP's actual asset bytes may be reused **without
+  downloading a body** only when the source URL/path are the same and
+  SHA-1 and size both equal the current imageinfo response. For new/changed
+  uploads, retrieve the body unconditionally and compare the fetched SHA-1
+  and size to the immediately queried metadata; conflicting observations
+  block publication. Record the exact upload title, URL, SHA-1, size,
+  uploaded timestamp, inspection timestamp and whether it authorized reuse
+  in the optional `uploadVersion` member field. Offline verification also
+  hashes each such ZIP member with SHA-1, checks the URL/identity/times,
+  and reconciles `uploadSha1ReusedAssetCount` and
+  `uploadVersionEvidenceCount` with actual inventory members.
+  This is representation evidence *at each request's observation time*,
+  not an atomic Wiki-wide snapshot or a substitute for a source signature.
+  Combined with verified parent SHA-256 and immutable ZIP contents, it is
+  stronger than inferring unchanged images from path or date alone.
+  Source revision IDs for current HTML and dependency-aware reuse remain
+  open P2.3b/P2.4 work.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

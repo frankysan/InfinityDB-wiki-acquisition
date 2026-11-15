@@ -128,6 +128,10 @@ def _remote(monkeypatch, *, changed=True, failure=None, empty_ids=False):
         assert language == LANG and site.key == SITE.key
         calls.append(url)
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if query.get("prop") == ["imageinfo"]:
+            # Optional upload-version evidence is absent in this baseline
+            # fixture, so the updater must fetch the binary normally.
+            return b'{"query":{"pages":[{"title":"File:icon.png","missing":true}]}}'
         if query.get("list") == ["recentchanges"]:
             return json.dumps({
                 "query": {"recentchanges": [] if not changed else [
@@ -205,7 +209,9 @@ def test_full_refresh_detects_move_missing_id_and_new_content(
         assert b"Old_Page.html" not in source.read("Main_Page.html")
     updated = verify_snapshot(result.archive, result.manifest, result.inventory)
     data = updated["captureMetadata"]
-    assert data["updateMode"] == "verified-full-source-refresh"
+    assert data["updateMode"] == "verified-asset-version-refresh"
+    assert data["conditionalReusedAssetCount"] == 0
+    assert data["sourceVersionSkipping"] is False
     assert data["sourceVersionSkipping"] is False
     assert data["pageMovesById"] == [{
         "pageId": 2,
@@ -285,7 +291,7 @@ def test_update_from_cli_and_mode_exclusivity(tmp_path: Path, monkeypatch, capsy
         "--manifest-dir", str(tmp_path / "cli-manifests"),
         "--work-root", str(tmp_path / "cli-work"),
     ]) == 0
-    assert "all remote content rechecked" in capsys.readouterr().out
+    assert "assets verified or downloaded" in capsys.readouterr().out
     assert len(list((tmp_path / "cli-archives").glob("*.zip"))) == 1
     for option in ("--include-history", "--retry-failed-only", "--from-snapshot"):
         value = (["other.zip"] if option == "--from-snapshot" else [])

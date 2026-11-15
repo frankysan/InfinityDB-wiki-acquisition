@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterable
 
+from infinity_wiki_acquisition.asset_evidence import read_asset_evidence
 from infinity_wiki_acquisition.crawl_checkpoint import read_crawl_checkpoint
 from infinity_wiki_acquisition.page_evidence import read_page_evidence
 from infinity_wiki_acquisition.snapshot_provenance import load_snapshot_manifest
@@ -269,6 +270,10 @@ def build_snapshot_inventory(
                 entry = {"representation": "source-bytes" if kind == "asset" else "unknown"}
             with source.open(info) as stream:
                 digest = _member_hash(stream)
+            if kind == "asset" and len(refs) == 1:
+                version = read_asset_evidence(work, refs[0], path, digest)
+                if version is not None:
+                    entry["sourceVersion"] = version
             if kind in {"current-page", "revision"}:
                 entry["renderedIdentity"]["sha256"] = digest
             members.append({
@@ -299,7 +304,12 @@ def build_snapshot_inventory(
         # Source-page HTTP response headers are not currently retained.
         # Numeric page IDs are available only for enumerated API pages.
         "captureMetadata": {
-            "httpHeadersAvailable": False,
+            "httpHeadersAvailable": any(
+                member["kind"] == "asset"
+                and bool(member.get("sourceVersion", {}).get("strongEtag")
+                         or member.get("sourceVersion", {}).get("lastModified"))
+                for member in members
+            ),
             "mediaWikiPageIdsAvailable": bool(page_ids),
         },
         "parent": None,

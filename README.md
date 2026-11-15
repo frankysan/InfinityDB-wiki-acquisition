@@ -151,7 +151,7 @@ The staging directory and history checkpoint are preserved for inspection,
 but `--resume-work` and `--retry-failed-only` cannot be combined with
 `--from-snapshot` yet; archive-derived resume is scheduled for P2.5.
 
-### Refresh a completed current-content snapshot (P2.3, conservative stage)
+### Refresh a completed current-content snapshot (P2.3a–b)
 
 A verified **non-history** ZIP with matching v3 provenance and v1 inventory
 can now seed a separate current-content refresh:
@@ -167,17 +167,45 @@ before any network requests. `--update-from` cannot be combined with
 `--include-history`, `--from-snapshot`, `--resume-work`, or
 `--retry-failed-only`. History-parent updates are not yet supported.
 
-**This stage is conservative, not bandwidth-incremental.** The producer
-first verifies all parent artifacts, then requests an auditable MediaWiki
-RecentChanges window and a **fresh, paginated allpages enumeration**, even
-on sites that do not normally enumerate main-namespace pages. It then
-refetches all current pages and discovered assets using the existing
-crawler; rendered HTML is rewritten from the new source response to local
-paths. Each newly acquired member is compared with the verified parent
-source URL/path and SHA-256; matching bytes are copied from the parent ZIP
-before the new archive is built. No page or asset HTTP download is skipped
-on the strength of a filename, an unchanged page ID, or stale metadata.
-Required source failures block publication and preserve the work directory.
+**Page HTML remains a conservative full refresh; binary asset bodies
+can be reused with fresh version evidence.** The producer first verifies
+the parent artifacts, requests an auditable MediaWiki RecentChanges window,
+and performs **fresh, paginated allpages enumeration**, even for sites
+that normally start with link discovery. It refetches every current HTML
+page and rewrites links from the newly retrieved source response.
+
+The asset reuse decision has two independent, fail-closed paths:
+
+- **MediaWiki original uploads:** For an original `/images/` URL on the
+  source Wiki (not a thumbnail), the updater requests the latest
+  `prop=imageinfo` record. It requires the reported upload URL to
+  match the *exact* requested URL, a valid upload timestamp, and SHA-1
+  plus size matching the bytes from the independently verified parent ZIP.
+  Only then can it reuse the original member without requesting the
+  upload body. Changed uploads are downloaded and checked against the
+  newly observed file version. Unavailable, ambiguous, or malformed
+  imageinfo falls back to ordinary HTTP download.
+- **Strong HTTP ETag:** For assets without usable upload evidence,
+  a verified parent may supply a strong ETag captured from a previous
+  unredirected HTTP response for that precise URL. The updater sends
+  `If-None-Match` and accepts parent bytes **only** when the response
+  is HTTP 304 with the identical strong ETag, effective URL, and no body.
+  Weak/missing validators, redirects, or an HTTP 200 response never
+  authorize a conditional skip. Contradictory 304 evidence blocks reuse.
+
+HTTP observations are captured in private `.wiki-asset-evidence/`
+work files and published as optional v1 inventory `sourceVersion`
+evidence, bound to source URL and member SHA-256. MediaWiki upload
+identities are independently published as optional `uploadVersion`
+records (original URL, upload title, SHA-1, size, timestamp, observation
+time and whether its bytes were reused). Every upload SHA-1 is also
+recomputed from the published ZIP contents by `verify_snapshot`.
+The inventory reports HTTP-304 and upload-SHA-1 reuse counts separately.
+Existing archives without either version source remain compatible; a
+missing proof simply requires a body download. Filename matches,
+RecentChanges coverage, unchanged page IDs and `Last-Modified` alone
+are never reasons to skip. Required failures block publication and
+preserve work.
 
 A new complete ZIP, matching v3 manifest (including parent
 `inputArtifact`), and independently verified v1 inventory are published
@@ -192,14 +220,16 @@ RecentChanges continuation is checked, but
 `retentionCoverage: unverified` is mandatory: even a paginated complete
 response cannot prove how far the Wiki retains older changes.
 
-**Outstanding P2.3 optimization:** authoritative captured current-revision
-IDs and upload hashes/timestamps are not consistently available in parent
-inventories. Those must be established and cross-checked before skipping
-transfers. Until then, this command deliberately reacquires source bytes.
-It does not guarantee that an entire multi-request crawl represents one
-atomic instant, or that a page's template/module dependencies are unchanged
-(P2.4). Updating history-enabled parents and resuming interrupted
-archive-derived work also remain pending.
+**Remaining P2.3 optimization:** capture and reconcile authoritative
+current-page revision IDs, then determine when (if ever) rendered HTML
+can be skipped without ignoring template/module or category dependencies
+(P2.4). The original-upload imageinfo path still makes an API request,
+but can avoid transferring the large upload body. HTTP validation likewise
+avoids only the response body, not the HTTP request. A multi-request crawl
+cannot claim one atomic source timestamp; media may change during lookup
+and download, in which case conflicting upload evidence blocks publication.
+Refreshing history-enabled parents and resuming interrupted derived runs
+remain pending.
 
 ### Resume historical revisions
 

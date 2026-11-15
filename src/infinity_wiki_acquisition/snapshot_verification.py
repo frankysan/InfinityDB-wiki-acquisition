@@ -167,6 +167,71 @@ def _member_metadata(
                      f"Contradictory source relationship at {path}")
     elif kind == "asset":
         _require(bool(urls), f"Asset lacks source URLs at {path}")
+        version = member.get("sourceVersion")
+        if version is not None:
+            from infinity_wiki_acquisition.cli import _is_strong_etag
+
+            version = _object(version, f"{path}.sourceVersion")
+            _require(set(version) == {
+                "sourceUrl", "sha256", "responseStatus", "effectiveUrl",
+                "strongEtag", "lastModified", "conditionalRevalidated",
+                "observedAt",
+            }, f"Unsupported asset source-version evidence at {path}")
+            _require(len(urls) == 1
+                     and version.get("sourceUrl") == urls[0]
+                     and version.get("sha256") == member["sha256"],
+                     f"Asset source version is not bound to member bytes at {path}")
+            status = version.get("responseStatus")
+            validator = version.get("strongEtag")
+            revalidated = version.get("conditionalRevalidated")
+            _require(type(status) is int and status in (200, 304)
+                     and type(revalidated) is bool
+                     and revalidated is (status == 304)
+                     and isinstance(version.get("effectiveUrl"), str)
+                     and (validator is None or (
+                         _is_strong_etag(validator)
+                         and version["effectiveUrl"] == urls[0]
+                     ))
+                     and (version.get("lastModified") is None
+                          or isinstance(version["lastModified"], str)),
+                     f"Invalid HTTP asset version evidence at {path}")
+            _require(not revalidated or (
+                _is_strong_etag(validator)
+                and version["effectiveUrl"] == urls[0]
+            ), f"Unverified conditional asset reuse at {path}")
+            observed = datetime.fromisoformat(
+                _string(version.get("observedAt"), f"{path}.observedAt"),
+            )
+            _require(observed.tzinfo is not None
+                     and observed.utcoffset() is not None,
+                     f"Asset observation timestamp has no timezone at {path}")
+        upload = member.get("uploadVersion")
+        if upload is not None:
+            upload = _object(upload, f"{path}.uploadVersion")
+            _require(set(upload) == {
+                "sourceUrl", "apiTitle", "remoteUrl", "sha1Hex", "size",
+                "uploadTimestamp", "checkedAt", "usedForReuse", "evidence",
+            }, f"Unsupported MediaWiki upload evidence at {path}")
+            _require(len(urls) == 1
+                     and upload.get("sourceUrl") == urls[0]
+                     and upload.get("remoteUrl") == urls[0]
+                     and isinstance(upload.get("apiTitle"), str)
+                     and upload["apiTitle"].startswith("File:")
+                     and isinstance(upload.get("sha1Hex"), str)
+                     and len(upload["sha1Hex"]) == 40
+                     and all(char in "0123456789abcdef"
+                             for char in upload["sha1Hex"])
+                     and type(upload.get("size")) is int
+                     and upload["size"] == member["size"]
+                     and type(upload.get("usedForReuse")) is bool
+                     and upload.get("evidence") == "mediawiki-imageinfo",
+                     f"MediaWiki upload identity does not match member at {path}")
+            for field in ("uploadTimestamp", "checkedAt"):
+                value = _string(upload.get(field), f"{path}.{field}")
+                timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                _require(timestamp.tzinfo is not None
+                         and timestamp.utcoffset() is not None,
+                         f"MediaWiki upload timestamp is not aware at {path}")
     # An unidentified member may still have observed URLs: the association
     # alone does not prove whether it is a page or an asset.
 
@@ -243,12 +308,50 @@ def verify_snapshot(
                      and input_artifact.get("sha256") == parent["archiveSha256"],
                      "Provenance inputArtifact does not identify the parent ZIP")
             metadata = _object(document.get("captureMetadata"), "captureMetadata")
-            if metadata.get("updateMode") == "verified-full-source-refresh":
-                _require(document["history"] is False
-                         and metadata.get("sourceVersionSkipping") is False
-                         and metadata.get("assetVersionComparison")
-                         == "content-hash-after-download",
-                         "Unsupported archive-derived refresh evidence")
+            mode = metadata.get("updateMode")
+            if mode in {
+                "verified-full-source-refresh", "conditional-asset-refresh",
+                "verified-asset-version-refresh",
+            }:
+                if mode in {
+                    "conditional-asset-refresh", "verified-asset-version-refresh",
+                }:
+                    conditional_count = metadata.get("conditionalReusedAssetCount")
+                    upload_reuse = (
+                        metadata.get("uploadSha1ReusedAssetCount")
+                        if mode == "verified-asset-version-refresh" else 0
+                    )
+                    upload_evidence = (
+                        metadata.get("uploadVersionEvidenceCount")
+                        if mode == "verified-asset-version-refresh" else 0
+                    )
+                    _require(
+                        document["history"] is False
+                        and type(conditional_count) is int
+                        and type(upload_reuse) is int
+                        and type(upload_evidence) is int
+                        and 0 <= conditional_count
+                        and 0 <= upload_reuse <= upload_evidence
+                        and conditional_count + upload_reuse
+                        <= parent["reusedMemberCount"]
+                        and metadata.get("sourceVersionSkipping")
+                        is (conditional_count + upload_reuse > 0)
+                        and metadata.get("assetVersionComparison")
+                        == (
+                            "strong-etag-304-or-imageinfo-sha1-or-body-hash"
+                            if mode == "verified-asset-version-refresh"
+                            else "strong-etag-304-or-body-hash"
+                        )
+                        and metadata.get("pageRevisionComparison")
+                        == "not-safe-for-rendered-html",
+                        "Unsupported verified asset reuse evidence",
+                    )
+                else:
+                    _require(document["history"] is False
+                             and metadata.get("sourceVersionSkipping") is False
+                             and metadata.get("assetVersionComparison")
+                             == "content-hash-after-download",
+                             "Unsupported archive-derived refresh evidence")
                 for key in ("matchedParentMemberCount", "changedMemberCount",
                             "newMemberCount", "removedMemberCount"):
                     value = metadata.get(key)
@@ -443,18 +546,68 @@ def verify_snapshot(
             for info in infos:
                 item = entries[info.filename]
                 digest = hashlib.sha256()
+                upload_digest = (
+                    hashlib.sha1() if item.get("uploadVersion") is not None else None
+                )
                 size = 0
                 with source_zip.open(info) as stream:
                     for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                         digest.update(chunk)
+                        if upload_digest is not None:
+                            upload_digest.update(chunk)
                         size += len(chunk)
                 _require(size == info.file_size == item["size"]
                          and digest.hexdigest() == item["sha256"],
                          f"Inventory member differs: {info.filename}")
+                if upload_digest is not None:
+                    _require(
+                        upload_digest.hexdigest() ==
+                        item["uploadVersion"].get("sha1Hex"),
+                        f"MediaWiki upload SHA-1 differs from member at {info.filename}",
+                    )
                 _member_metadata(
                     item, path=info.filename, paths=paths, history=history,
                     history_sources=revision_sources,
                 )
+
+            conditional_count = sum(
+                1 for item in entries.values()
+                if item.get("kind") == "asset"
+                and item.get("sourceVersion", {}).get(
+                    "conditionalRevalidated", False,
+                )
+            )
+            upload_evidence = [
+                item["uploadVersion"] for item in entries.values()
+                if item.get("kind") == "asset"
+                and item.get("uploadVersion") is not None
+            ]
+            upload_reuse_count = sum(
+                1 for entry in upload_evidence if entry["usedForReuse"]
+            )
+            if parent is None:
+                _require(
+                    conditional_count == 0 and upload_reuse_count == 0,
+                    "A standalone snapshot cannot claim reused remote assets",
+                )
+            else:
+                mode = document["captureMetadata"].get("updateMode")
+                if mode in {
+                    "conditional-asset-refresh", "verified-asset-version-refresh",
+                }:
+                    _require(
+                        conditional_count ==
+                        document["captureMetadata"]["conditionalReusedAssetCount"],
+                        "Conditional asset count differs from recorded member evidence",
+                    )
+                if mode == "verified-asset-version-refresh":
+                    _require(
+                        upload_reuse_count ==
+                        document["captureMetadata"]["uploadSha1ReusedAssetCount"]
+                        and len(upload_evidence) ==
+                        document["captureMetadata"]["uploadVersionEvidenceCount"],
+                        "MediaWiki upload reuse count differs from member evidence",
+                    )
 
         _require(snapshot_content_sha256(archive) == record["contentSha256"],
                  "Snapshot logical-content SHA-256 mismatch")
