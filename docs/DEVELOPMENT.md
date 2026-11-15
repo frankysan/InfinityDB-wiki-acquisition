@@ -275,6 +275,33 @@ Agents start with [AGENTS.md](../AGENTS.md).
   matches those carried-forward current pages. No new relationship API
   request is made during the history-only upgrade.
 
+  P2.4c.1 adds a deterministic post-crawl `renderReuseGate` to current
+  update inventories. It consumes the already-checked
+  `currentRevisionComparisons`, `sourceTimeCoverage`,
+  `renderInvalidation` and `recentChanges` evidence plus the complete
+  current-page member set. It labels every page `refetch-required`,
+  lists unmet proof requirements and independently observed risk signals,
+  and explicitly records `reuseAuthorized: false` and zero skipped HTML
+  bodies. Even `same-source-revision` with no observed changes is
+  insufficient: the original rendered representation is not validated,
+  source time is non-atomic, transitive/module closures and category/index
+  consistency are unverified, RecentChanges retention is unknown, and the
+  archived bytes are already rewritten. No code path uses the audit as a
+  positive reuse grant. `verify_snapshot` recomputes the exact per-page
+  list and counts; future fast paths must be separately versioned and
+  cannot simply flip this report to `reuseAuthorized: true`.
+
+  On `--from-snapshot --include-history` of a verified update parent, the
+  gate remains under `inheritedCurrentUpdateEvidence` and is checked
+  against the retained current page members. V2 historical-only pages and
+  oldids are outside the current-page decision set. Existing v1/v2
+  inventories lacking this optional field continue to verify. Do not
+  infer fresh HTML acquisition from history-only upgrades. P2.4c.2
+  remains open: require independently validated rendered-response identity
+  (including URL/representation/headers), a bounded source-time and
+  dependency/category/index contract, and byte-equivalent or replayable
+  offline rewrites before authorizing a skipped body.
+
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
 

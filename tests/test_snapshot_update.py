@@ -240,7 +240,13 @@ def test_no_changes_all_members_byte_identical(tmp_path: Path, monkeypatch):
     assert result.moved_pages == 0
     assert ROOT in calls and ASSET in calls
     assert sha256_file(result.archive) == sha256_file(parent[0])
-    assert verify_snapshot(result.archive, result.manifest, result.inventory)["history"] is False
+    checked = verify_snapshot(result.archive, result.manifest, result.inventory)
+    assert checked["history"] is False
+    gate = checked["captureMetadata"]["renderReuseGate"]
+    assert gate["reuseAuthorized"] is False
+    assert gate["currentPageCount"] == gate["refetchedPageCount"] == 3
+    assert gate["skippedHtmlBodyCount"] == 0
+    assert all(row["decision"] == "refetch-required" for row in gate["decisions"])
 
 
 def test_required_page_failure_keeps_work_and_never_publishes(tmp_path: Path, monkeypatch):
@@ -577,6 +583,10 @@ def test_history_upgrade_retains_verified_update_relationship_evidence(
     assert capture["historyCutoff"] == "all-observed"
     assert "updateMode" not in capture
     assert capture["inheritedCurrentUpdateEvidence"] == original["captureMetadata"]
+    assert capture["inheritedCurrentUpdateEvidence"]["renderReuseGate"] == original[
+        "captureMetadata"
+    ]["renderReuseGate"]
+    assert "renderReuseGate" not in capture
     assert capture["pageRelationshipEvidence"] == original[
         "captureMetadata"
     ]["pageRelationshipEvidence"]
@@ -601,3 +611,71 @@ def test_history_upgrade_retains_verified_update_relationship_evidence(
         verify_snapshot(
             upgraded.archive, upgraded.manifest, upgraded.inventory,
         )
+
+
+@pytest.mark.parametrize("attack", ["authorize", "skip-count", "per-page", "missing-page"])
+def test_update_rejects_forged_html_reuse_gate(
+    tmp_path: Path, monkeypatch, attack: str,
+):
+    parent = _build_parent(tmp_path)
+    calls = _remote(monkeypatch, changed=False)
+    result = _update(parent, tmp_path)
+    doc = verify_snapshot(result.archive, result.manifest, result.inventory)
+    gate = doc["captureMetadata"]["renderReuseGate"]
+    assert ROOT in calls
+    if attack == "authorize":
+        gate["reuseAuthorized"] = True
+    elif attack == "skip-count":
+        gate["skippedHtmlBodyCount"] = 1
+    elif attack == "per-page":
+        gate["decisions"][0]["decision"] = "reuse-authorized"
+    else:
+        gate["decisions"].pop()
+    result.inventory.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="Rendered HTML reuse gate"):
+        verify_snapshot(result.archive, result.manifest, result.inventory)
+
+
+def test_history_upgrade_rejects_forged_inherited_render_reuse_gate(
+    tmp_path: Path, monkeypatch,
+):
+    from infinity_wiki_acquisition.snapshot_upgrade import (
+        upgrade_snapshot_with_history,
+    )
+
+    seed = _build_parent(tmp_path)
+    _remote(monkeypatch, changed=False)
+    refreshed = _update(seed, tmp_path)
+    titles = {"Main Page": 1, "Old Page": 2, "Deleted Page": 3}
+
+    def history_fetch(url, *, language, site):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if query.get("prop") == ["revisions"]:
+            title = query["titles"][0].replace("_", " ")
+            page_id = titles[title]
+            return json.dumps({"query": {"pages": [{
+                "pageid": page_id, "title": title,
+                "revisions": [{
+                    "revid": 1000 + page_id, "parentid": 0,
+                    "timestamp": "2026-10-01T12:00:00Z",
+                }],
+            }]}}).encode()
+        if "oldid" in query:
+            return b"<html>oldid</html>"
+        raise AssertionError(f"Unexpected current HTML fetch: {url}")
+
+    monkeypatch.setattr(cli, "fetch_site_bytes", history_fetch)
+    upgraded = upgrade_snapshot_with_history(
+        refreshed.archive, refreshed.manifest, refreshed.inventory,
+        archive_directory=tmp_path / "history-reuse-out",
+        manifest_directory=tmp_path / "history-reuse-manifests",
+        work_root=tmp_path / "history-reuse-work",
+        now=datetime(2026, 11, 16, 16, tzinfo=timezone.utc),
+    )
+    doc = verify_snapshot(upgraded.archive, upgraded.manifest, upgraded.inventory)
+    inherited = doc["captureMetadata"]["inheritedCurrentUpdateEvidence"]
+    assert inherited["renderReuseGate"]["skippedHtmlBodyCount"] == 0
+    inherited["renderReuseGate"]["reuseAuthorized"] = True
+    upgraded.inventory.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="Inherited rendered HTML reuse gate"):
+        verify_snapshot(upgraded.archive, upgraded.manifest, upgraded.inventory)

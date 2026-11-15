@@ -303,6 +303,29 @@ and accounting under `inheritedCurrentUpdateEvidence`. This is previous
 source evidence, **not** a newly observed dependency graph or an update of
 history-time HTML.
 
+**Rendered HTML reuse safety gate (P2.4c.1):** A refresh publishes an
+optional `captureMetadata.renderReuseGate` assessment for each current
+page, including the source-revision comparison, separately observed
+invalidation risks and unmet source-time, transclusion, category/index,
+representation-validation and offline rewrite-equivalence requirements.
+`verify_snapshot` independently recomputes the entire assessment, and
+rejects invented skip decisions or inconsistent counts. A subsequent
+history-only upgrade retains the exact parent assessment as inherited
+source evidence, not a new freshness assertion. Historical-only pages
+and oldids are excluded from the current HTML decision set.
+
+This is deliberately a **negative gate**: every current page remains
+`refetch-required`; `reuseAuthorized` is `false` and
+`skippedHtmlBodyCount` is `0`. Neither a matching latest revision,
+complete template/category API pagination, nor an empty RecentChanges
+window binds an earlier rendered response to all of its dependencies.
+The archive currently retains rewritten HTML, not replayable original
+response bytes. A future separately verified protocol would need exact
+rendered-response identity, a sufficient change/dependency and source-time
+contract, and proven equivalence of offline link rewriting before skipping
+any HTML response body. This stage does **not** reduce HTML downloads or
+change inventory v1/v2, ZIP, history or v3 provenance formats.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It

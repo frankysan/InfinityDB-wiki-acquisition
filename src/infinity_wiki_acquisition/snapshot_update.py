@@ -22,6 +22,7 @@ from infinity_wiki_acquisition.crawl_checkpoint import (
     CHECKPOINT_FILENAME, read_crawl_checkpoint,
 )
 from infinity_wiki_acquisition.render_invalidation import assess_render_invalidation
+from infinity_wiki_acquisition.render_reuse_gate import assess_render_reuse
 from infinity_wiki_acquisition.snapshot_inventory import build_snapshot_inventory
 from infinity_wiki_acquisition.snapshot_upgrade import (
     _parent_revision_records, _publish_verified_inventory,
@@ -684,6 +685,13 @@ def update_snapshot(
                 site=site, language=language,
             ),
         }
+        updated["captureMetadata"]["renderReuseGate"] = assess_render_reuse(
+            updated["members"],
+            revision_comparisons=revision_transitions,
+            invalidation=updated["captureMetadata"]["renderInvalidation"],
+            source_time=updated["captureMetadata"]["sourceTimeCoverage"],
+            recent_changes=changes,
+        )
         updated["parent"] = {
             "archiveName": source_archive.name,
             "archiveSha256": parent["snapshot"]["archiveSha256"],

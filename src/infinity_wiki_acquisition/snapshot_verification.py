@@ -1054,6 +1054,23 @@ def verify_snapshot(
                         ),
                         "Inherited render invalidation audit is inconsistent",
                     )
+                if "renderReuseGate" in inherited_update:
+                    from infinity_wiki_acquisition.render_reuse_gate import (
+                        assess_render_reuse,
+                    )
+
+                    _require(
+                        inherited_update["renderReuseGate"] == assess_render_reuse(
+                            entries.values(),
+                            revision_comparisons=inherited_update[
+                                "currentRevisionComparisons"
+                            ],
+                            invalidation=inherited_update["renderInvalidation"],
+                            source_time=inherited_update["sourceTimeCoverage"],
+                            recent_changes=inherited_update["recentChanges"],
+                        ),
+                        "Inherited rendered HTML reuse gate is inconsistent",
+                    )
             relationship_coverage = metadata.get(
                 "pageRelationshipEvidence",
             )
@@ -1133,6 +1150,32 @@ def verify_snapshot(
                 )
                 _require(invalidation == expected_invalidation,
                          "Render invalidation claims contradict acquisition evidence")
+            reuse_gate = metadata.get("renderReuseGate")
+            if reuse_gate is not None:
+                from infinity_wiki_acquisition.render_reuse_gate import (
+                    assess_render_reuse,
+                )
+
+                _require(
+                    parent is not None
+                    and metadata.get("updateMode")
+                    == "verified-asset-version-refresh"
+                    and metadata.get("renderInvalidation") is not None
+                    and metadata.get("sourceTimeCoverage") is not None
+                    and isinstance(metadata.get("currentRevisionComparisons"), list)
+                    and isinstance(metadata.get("recentChanges"), dict),
+                    "Rendered HTML reuse gate requires update evidence",
+                )
+                _require(
+                    reuse_gate == assess_render_reuse(
+                        entries.values(),
+                        revision_comparisons=metadata["currentRevisionComparisons"],
+                        invalidation=metadata["renderInvalidation"],
+                        source_time=metadata["sourceTimeCoverage"],
+                        recent_changes=metadata["recentChanges"],
+                    ),
+                    "Rendered HTML reuse gate contradicts source evidence",
+                )
             upload_evidence = [
                 item["uploadVersion"] for item in entries.values()
                 if item.get("kind") == "asset"

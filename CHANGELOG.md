@@ -46,6 +46,15 @@ from the downloader and shared archive/provenance Git history and the
   informational.
 
 ### Added
+
+- **Acquisition:** Added P2.4c.1 independently checked rendered-HTML reuse
+  rejection decisions to updated snapshot inventories. Each current page
+  carries explicit missing proofs and observed invalidation risks, including
+  unchanged revision IDs, templates/modules and category/index activity.
+  Current HTML body fetching remains mandatory and the reported skip count
+  is zero; old v1/v2 inventories remain supported. A history-only upgrade
+  preserves the prior gate as inherited evidence, and the offline verifier
+  rejects forged eligibility, skip counts and omitted pages.
 - **Acquisition:** Added P2.4b MediaWiki template/category relationship
   observations to refreshed snapshots. Paginated, bounded API requests retain
   per-page namespace/title lists, numeric page IDs, observation windows and

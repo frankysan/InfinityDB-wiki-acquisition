@@ -50,6 +50,16 @@ def test_opt_in_retains_deleted_html_and_revision_under_v2_not_current(
     checked = verify_snapshot(child.archive, child.manifest, child.inventory)
     assert checked["formatVersion"] == 2
     assert checked["history"]
+    reuse_gate = checked["captureMetadata"]["renderReuseGate"]
+    current_pages = [
+        item for item in checked["members"] if item["kind"] == "current-page"
+    ]
+    assert reuse_gate["currentPageCount"] == len(current_pages)
+    assert reuse_gate["refetchedPageCount"] == len(current_pages)
+    assert reuse_gate["skippedHtmlBodyCount"] == 0
+    assert DELETED not in {
+        decision["pageUrl"] for decision in reuse_gate["decisions"]
+    }
     assert checked["captureMetadata"]["historyRefresh"][
         "historyCutoff"
     ] == "current-all-observed-former-last-archived"
