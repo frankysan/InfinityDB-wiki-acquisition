@@ -47,6 +47,16 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Completed P2.3b.4 source-time and coverage reconciliation
+  with optional, independently verified `sourceTimeCoverage` in v1
+  inventories. Summaries count unknown current revisions, missing HTML
+  observation times, revision timestamps later than earlier HTML fetches,
+  events observed after the RecentChanges query cutoff, and unresolved
+  page moves/missing parent IDs. The evidence explicitly disclaims an
+  atomic source snapshot, complete RecentChanges retention and verified
+  template/module dependencies; existing archives remain compatible.
+  Rendered HTML continues to be refetched rather than reused on a
+  revision-ID match.
 - **Acquisition:** Added P2.3b.3 batched current-page revision observations
   after the HTML crawl. New snapshots record latest source revision IDs,
   timestamps, MediaWiki page ID/title, API query windows and original HTML

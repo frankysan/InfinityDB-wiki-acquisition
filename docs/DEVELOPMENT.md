@@ -199,9 +199,34 @@ Agents start with [AGENTS.md](../AGENTS.md).
   On `--update-from`, compare parent/child latest source revision IDs by
   stable page ID and report same/changed/unknown/no-baseline states with
   `htmlRefetched: true`. Keep prior move/missing-page IDs separate from
-  this comparison; an absent ID is not proof of deletion. The next
-  follow-up is concurrency and source-time coverage reconciliation, while
-  P2.4 owns transclusion/dependency invalidation.
+  this comparison; an absent ID is not proof of deletion. P2.4 owns
+  transclusion/dependency invalidation.
+- P2.3b.4 reconciles *observable* source-time risks without claiming a
+  point-in-time wiki snapshot. When current-revision metadata is available,
+  attach optional `captureMetadata.sourceTimeCoverage` to the v1 inventory
+  and independently recompute it during `verify_snapshot`. This compact
+  assessment counts current pages, observed/unknown revision identities,
+  unavailable original HTML timestamps and latest revision timestamps later
+  than the earlier HTML fetch. It also counts HTML/revision observations
+  **after** the requested RecentChanges window, and on archive updates,
+  unresolved URL association changes and missing parent page IDs.
+  `scope: observations-only`, `consistency: not-verified-atomic`,
+  `renderDependencies: unverified` and `recentChangesRetention: unverified`
+  (or `not-observed`) are mandatory. A later source revision timestamp is
+  a risk signal, not a proof of exactly which revision or transclusions
+  produced earlier HTML, and can reflect clock resolution/skew. Matching
+  source revision IDs across archives cannot prove unchanged rendering.
+  RecentChanges pagination can finish while its retention horizon remains
+  unknown; its requested window may close before later pages or revision
+  metadata are fetched, so it cannot certify edits during the crawl.
+  A missing enumerated page ID or an uncorroborated URL change cannot be
+  promoted to a verified deletion or move. Stronger freshness guarantees
+  would need a source-side render/dependency identity, a verified change-log
+  horizon and explicit observation/retry consistency rules, not just another
+  latest-revision query. Until P2.4 addresses transclusion/category
+  invalidation, all rendered HTML continues to be refetched and snapshots
+  remain evidence collected across multiple requests rather than an atomic
+  remote state. Existing ZIP/v3 manifest/older v1 inventories remain valid.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

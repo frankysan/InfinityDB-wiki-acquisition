@@ -699,6 +699,23 @@ def verify_snapshot(
                     not revision_observations,
                     "Unreported current revision observations",
                 )
+            source_time = document["captureMetadata"].get("sourceTimeCoverage")
+            if source_time is not None:
+                from infinity_wiki_acquisition.source_time_coverage import (
+                    assess_source_time_coverage,
+                )
+
+                metadata = document["captureMetadata"]
+                observed_time = assess_source_time_coverage(
+                    entries.values(),
+                    recent_changes=metadata.get("recentChanges"),
+                    page_moves=metadata.get("pageMovesById"),
+                    absent_page_ids=metadata.get("parentPageIdsAbsentFromEnumeration"),
+                )
+                _require(
+                    source_time == observed_time,
+                    "Source-time coverage claims contradict acquired evidence",
+                )
             upload_evidence = [
                 item["uploadVersion"] for item in entries.values()
                 if item.get("kind") == "asset"

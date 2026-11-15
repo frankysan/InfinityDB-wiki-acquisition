@@ -22,6 +22,7 @@ from infinity_wiki_acquisition.crawl_checkpoint import (
     CHECKPOINT_FILENAME, read_crawl_checkpoint,
 )
 from infinity_wiki_acquisition.snapshot_inventory import build_snapshot_inventory
+from infinity_wiki_acquisition.source_time_coverage import assess_source_time_coverage
 from infinity_wiki_acquisition.snapshot_provenance import sha256_file, write_snapshot_manifest
 from infinity_wiki_acquisition.snapshot_upgrade import _publish_verified_inventory
 from infinity_wiki_acquisition.snapshot_verification import verify_snapshot
@@ -576,6 +577,10 @@ def update_snapshot(
             "parentPageIdsAbsentFromEnumeration": absent,
             "currentRevisionComparisons": revision_transitions,
             "recentChanges": changes,
+            "sourceTimeCoverage": assess_source_time_coverage(
+                updated["members"], recent_changes=changes,
+                page_moves=moved, absent_page_ids=absent,
+            ),
         }
         updated["parent"] = {
             "archiveName": source_archive.name,

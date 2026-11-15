@@ -238,9 +238,29 @@ rendered HTML stayed unchanged: templates, modules, categories and other
 dependencies may have changed (P2.4). These batched observations occur
 *after* HTML downloads, not atomically with them. The original-upload
 imageinfo and HTTP-validator paths can avoid large asset response bodies,
-but still make API/conditional requests. Concurrency/source-time
-reconciliation, refreshing history-enabled parents and resuming
-interrupted derived runs remain outstanding.
+but still make API/conditional requests.
+
+**Source-time and coverage audit (P2.3b.4):** New snapshots with
+current-page revision observations include a `sourceTimeCoverage` summary
+in their inventory. It counts missing revision/HTML timing evidence,
+latest revision timestamps later than the earlier HTML fetch, and page
+fetches or revision checks outside the already queried RecentChanges
+window. Updates also count unresolved move/alias associations and
+previously known page IDs absent from fresh enumeration. These counts
+are recomputed by `verify_snapshot`; consumers cannot silently promote
+them into a stronger status. The explicit limits are
+`consistency: not-verified-atomic`,
+`renderDependencies: unverified`, and
+`recentChangesRetention: unverified` (or `not-observed`).
+These are **risk indicators, not source-time correctness guarantees**:
+RecentChanges may omit old activity and closes at the initially requested
+cutoff; the latest revision metadata is checked later than the HTML body.
+Therefore pages remain fully fetched, and no unchanged revision ID
+certifies the previously rendered content. Future dependency-aware
+verification (P2.4) is required before making stronger claims.
+
+Refreshing history-enabled parents and resuming interrupted derived
+runs remain outstanding.
 
 ### Resume historical revisions
 

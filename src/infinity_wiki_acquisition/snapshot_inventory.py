@@ -18,6 +18,7 @@ from typing import Any, Iterable
 from infinity_wiki_acquisition.asset_evidence import read_asset_evidence
 from infinity_wiki_acquisition.crawl_checkpoint import read_crawl_checkpoint
 from infinity_wiki_acquisition.current_revisions import load_current_revision_evidence
+from infinity_wiki_acquisition.source_time_coverage import assess_source_time_coverage
 from infinity_wiki_acquisition.page_evidence import read_page_evidence
 from infinity_wiki_acquisition.snapshot_provenance import load_snapshot_manifest
 
@@ -333,6 +334,9 @@ def build_snapshot_inventory(
                     ),
                     "renderCorrespondence": "not-verified",
                 }
+            } if current_revisions is not None else {}),
+            **({
+                "sourceTimeCoverage": assess_source_time_coverage(members),
             } if current_revisions is not None else {}),
         },
         "parent": None,
