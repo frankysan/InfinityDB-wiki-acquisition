@@ -46,6 +46,16 @@ from the downloader and shared archive/provenance Git history and the
   informational.
 
 ### Added
+- **Acquisition:** Added P2.4b MediaWiki template/category relationship
+  observations to refreshed snapshots. Paginated, bounded API requests retain
+  per-page namespace/title lists, numeric page IDs, observation windows and
+  response digests; unavailable or contradictory results stay explicitly
+  unknown. Independently checked optional inventory fields preserve existing
+  ZIP/history contracts. API-observed render/category candidates are separate
+  from HTML navigation links, and cannot authorize HTML reuse. Subsequent
+  history-only upgrades preserve previously verified relationship records
+  and explicitly nest the parent update audit rather than mislabel it
+  as refreshed history-time evidence.
 - **Acquisition:** Added P2.4a rendered-HTML invalidation signals to
   refreshed snapshot inventories. The independent verifier checks
   Template/Module/Category and categorization/index event identities and

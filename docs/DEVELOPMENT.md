@@ -239,8 +239,44 @@ Agents start with [AGENTS.md](../AGENTS.md).
   Keep fresh allpages/linked discovery and full HTML fetching, including
   when no change events or link candidates are found. Both historical-only
   v2 members and archived oldids remain outside the current-page audit.
-  P2.4b must investigate additional paginated MediaWiki API relationships
-  before any future P2.4c HTML-skip decision.
+  P2.4b now observes `prop=templates|categories` using numeric current
+  page IDs in batches of 40, with `tllimit=cllimit=max`, complete MediaWiki
+  continuation tokens, loop/resource bounds and exact API response digests.
+  It stores private `.wiki-page-relationships.json` before inventory creation;
+  optional inventory-v1/v2 `pageRelationships` records carry page URL/path/ID,
+  returned API title, namespace/title lists, query start/end, earlier HTML
+  observation time and response SHA-256s. API errors, malformed continuation,
+  page-ID/title disagreement, redirects, unsupported namespace data or an
+  exhausted request budget result in **unknown**, without partial lists.
+  API title matching handles underscores and case without treating a redirect
+  or shared numeric page ID as proof that different URLs are aliases.
+  The verifier checks each current page record, snapshot page identity,
+  observation chronology, exact list shape/order, status, non-claims, and
+  `pageRelationshipEvidence` aggregate counts; old inventories remain valid.
+  API response digests are provenance observations, not authenticity proofs
+  or a substitute for retaining/verifying raw remote responses externally.
+
+  The `prop=templates` API lists pages reported transcluded; it does not
+  establish **direct versus indirect** dependency or module/Scribunto call
+  closure for a specific earlier rendered response. `prop=categories`
+  observes membership at API request time, not guaranteed membership when
+  earlier HTML was fetched or later during a Wiki update. The P2.4a
+  invalidation audit adds separately labeled post-HTML API candidate matches;
+  these are not equivalent to HTML source-navigation link candidates or
+  proved render invalidation. `sourceTimeCoverage.renderDependencies`
+  remains `unverified`; fresh discovery, HTML refetch and link rewriting
+  remain mandatory under P2.4c. If a verified update parent is subsequently
+  upgraded with `--from-snapshot --include-history`, preserve the copied
+  current page relationship records and `pageRelationshipEvidence`, and
+  keep the parent's update-mode audit/accounting in the explicit
+  `inheritedCurrentUpdateEvidence` metadata field. Do not relabel it as
+  a new current-source update or alter observation timestamps. The
+  independent verifier checks that the inherited relationship coverage
+  matches those carried-forward current pages. No new relationship API
+  request is made during the history-only upgrade.
+
+  Stronger freshness assurance still requires a source-side render/dependency
+  identity, verified change horizon and coherent source-time observations.
 
 - P2.3c.1 allows `--update-from` to refresh a verified history parent.
   Keep the current page/asset recrawl, imageinfo/ETag reuse and private

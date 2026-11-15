@@ -101,3 +101,46 @@ def test_localized_namespace_signals_preserve_identity_without_false_dependency(
     assert report["observedModuleChangeRcids"] == [2]
     assert report["observedCategoryChangeRcids"] == [3]
     assert report["unverifiedLinkCandidates"] == []
+
+
+def test_api_observed_relationship_candidates_are_not_render_proofs():
+    page = _page("Main Page")
+    page["pageRelationships"] = {
+        "status": "observed",
+        "templates": [
+            {"ns": 10, "title": "Template:Card"},
+            {"ns": 828, "title": "Module:Logic"},
+        ],
+        "categories": [{"ns": 14, "title": "Category:Troopers"}],
+    }
+    events = [
+        _event(4, "Category:Troopers"),
+        _event(2, "Module:Logic"),
+        _event(1, "Template:Card"),
+    ]
+    result = _assess([page], events)
+    assert result["unverifiedLinkCandidates"] == []
+    assert result["apiObservedTransclusionCandidates"] == [{
+        "pageUrl": page["page"]["url"],
+        "changeRcids": [1, 2],
+        "basis": "post-html-api-transcluded-page-list",
+    }]
+    assert result["apiObservedCategoryCandidates"] == [{
+        "pageUrl": page["page"]["url"],
+        "changeRcids": [4],
+        "basis": "post-html-api-category-association",
+    }]
+    assert result["directDependencyCoverage"] == "unknown"
+    assert result["renderReusePolicy"] == "refetch-all-current-html"
+
+
+def test_unknown_api_relationships_do_not_create_false_candidates():
+    page = _page("Main Page")
+    page["pageRelationships"] = {
+        "status": "api-unavailable",
+        "templates": [],
+        "categories": [],
+    }
+    result = _assess([page], [_event(1, "Template:Card")])
+    assert result["apiObservedTransclusionCandidates"] == []
+    assert result["apiObservedCategoryCandidates"] == []

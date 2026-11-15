@@ -63,6 +63,7 @@ def assess_render_invalidation(
     # Preserve exact event IDs in recentChanges.events. Normalized titles
     # are used only for unverified source-link matching.
     title_events: dict[tuple[str, str], set[int]] = {}
+    category_events: dict[str, set[int]] = {}
     for event in recent_changes["events"]:
         namespace = _namespace(event["title"])
         if namespace is not None:
@@ -71,6 +72,10 @@ def assess_render_invalidation(
                 title_events.setdefault(
                     (namespace, _normalized_title(event["title"])), set(),
                 ).add(event["rcid"])
+        if namespace == "category":
+            category_events.setdefault(
+                _normalized_title(event["title"]), set(),
+            ).add(event["rcid"])
         if event["type"] == "categorize":
             categorization_ids.append(event["rcid"])
         if (event["type"] in {"new", "categorize"}
@@ -79,6 +84,8 @@ def assess_render_invalidation(
             index_ids.append(event["rcid"])
 
     candidates = []
+    api_transclusion_candidates = []
+    api_category_candidates = []
     for page in pages:
         matched: set[int] = set()
         for link in page.get("references") or []:
@@ -98,6 +105,33 @@ def assess_render_invalidation(
                 "changeRcids": sorted(matched),
                 "basis": "unverified-source-html-links",
             })
+        observation = page.get("pageRelationships")
+        if not isinstance(observation, dict) or observation.get("status") != "observed":
+            continue
+        matched_transclusions: set[int] = set()
+        for item in observation["templates"]:
+            kind = _namespace(item["title"])
+            if kind in {"template", "module"}:
+                matched_transclusions.update(title_events.get(
+                    (kind, _normalized_title(item["title"])), (),
+                ))
+        if matched_transclusions:
+            api_transclusion_candidates.append({
+                "pageUrl": page["page"]["url"],
+                "changeRcids": sorted(matched_transclusions),
+                "basis": "post-html-api-transcluded-page-list",
+            })
+        matched_categories: set[int] = set()
+        for item in observation["categories"]:
+            matched_categories.update(category_events.get(
+                _normalized_title(item["title"]), (),
+            ))
+        if matched_categories:
+            api_category_candidates.append({
+                "pageUrl": page["page"]["url"],
+                "changeRcids": sorted(matched_categories),
+                "basis": "post-html-api-category-association",
+            })
 
     return {
         "scope": "observed-signals-only",
@@ -115,6 +149,8 @@ def assess_render_invalidation(
         "observedCategorizationRcids": sorted(categorization_ids),
         "observedIndexChangeRcids": sorted(index_ids),
         "unverifiedLinkCandidates": candidates,
+        "apiObservedTransclusionCandidates": api_transclusion_candidates,
+        "apiObservedCategoryCandidates": api_category_candidates,
         "unresolvedPageUrlAssociationCount": sum(
             row.get("interpretation") == "unresolved-url-association"
             for row in page_moves

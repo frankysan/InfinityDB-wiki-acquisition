@@ -475,6 +475,14 @@ def update_snapshot(
             fresh.pages, state["pageIds"], work,
             site=site, language=language,
         )
+        from infinity_wiki_acquisition.page_relationships import (
+            observe_page_relationships,
+        )
+
+        observe_page_relationships(
+            fresh.pages, state["pageIds"], work,
+            site=site, language=language,
+        )
         # Every member is now backed by freshly fetched bytes OR an explicit
         # remote version validation against verified parent ZIP content.
         # Recopy only matching members to maintain exact parent bytes.

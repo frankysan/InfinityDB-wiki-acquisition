@@ -93,6 +93,9 @@ def _member_metadata(
     _require(member.get("representation") == _KINDS[kind],
              f"Representation/kind mismatch at {path}")
     urls = _url_list(member.get("sourceUrls"), f"{path}.sourceUrls")
+    if kind != "current-page":
+        _require("pageRelationships" not in member,
+                 f"Only current pages may have relationship observations: {path}")
     if kind == "generated-index":
         _require(history and path == "_history/index.json" and not urls,
                  f"Invalid generated index at {path}")
@@ -174,6 +177,39 @@ def _member_metadata(
                 )
                 _require(_same_title(current["apiTitle"], expected_title),
                          f"Current revision API title contradicts page URL: {path}")
+        relationship = member.get("pageRelationships")
+        if relationship is not None:
+            from infinity_wiki_acquisition.page_relationships import (
+                validate_page_relationship,
+            )
+            from infinity_wiki_acquisition.current_revisions import _same_title
+            from infinity_wiki_acquisition.cli import page_title_from_url
+
+            try:
+                validate_page_relationship(relationship, url=url)
+            except ValueError as exc:
+                raise SnapshotVerificationError(
+                    f"Invalid page relationship evidence at {path}: {exc}"
+                ) from exc
+            _require(
+                relationship["memberPath"] == path
+                and relationship["pageId"] == page_id,
+                f"Page relationship identity contradicts page: {path}",
+            )
+            expected_title = page_title_from_url(
+                url, site=site, language=language,
+            )
+            if relationship["status"] == "observed":
+                _require(_same_title(relationship["apiTitle"], expected_title),
+                         f"Relationship API title differs from source: {path}")
+            if relationship["status"] == "identity-unresolved":
+                _require(not _same_title(relationship["apiTitle"], expected_title),
+                         f"Incorrectly unresolved API title: {path}")
+            if current is not None:
+                _require(
+                    relationship["htmlFetchedAt"] == current["htmlFetchedAt"],
+                    f"Relationship HTML observation time contradicts revision: {path}",
+                )
         _require(member.get("transclusionCoverage") == {
             "template": "unknown", "module": "unknown",
         }, f"Unsupported transclusion claim at {path}")
@@ -961,6 +997,99 @@ def verify_snapshot(
                     not revision_observations,
                     "Unreported current revision observations",
                 )
+            metadata = document["captureMetadata"]
+            inherited_update = metadata.get("inheritedCurrentUpdateEvidence")
+            if inherited_update is not None:
+                _require(
+                    parent is not None and history
+                    and metadata.get("historyCutoff") == "all-observed"
+                    and "updateMode" not in metadata
+                    and isinstance(inherited_update, dict)
+                    and inherited_update.get("updateMode") in {
+                        "verified-full-source-refresh",
+                        "conditional-asset-refresh",
+                        "verified-asset-version-refresh",
+                    }
+                    and all(
+                        metadata.get(key) == inherited_update.get(key)
+                        for key in (
+                            "httpHeadersAvailable", "mediaWikiPageIdsAvailable",
+                            "currentRevisionEvidence", "pageRelationshipEvidence",
+                        )
+                    ),
+                    "Inherited current-update evidence has invalid scope",
+                )
+                if "sourceTimeCoverage" in inherited_update:
+                    from infinity_wiki_acquisition.source_time_coverage import (
+                        assess_source_time_coverage,
+                    )
+
+                    _require(
+                        inherited_update["sourceTimeCoverage"]
+                        == assess_source_time_coverage(
+                            entries.values(),
+                            recent_changes=inherited_update.get("recentChanges"),
+                            page_moves=inherited_update.get("pageMovesById"),
+                            absent_page_ids=inherited_update.get(
+                                "parentPageIdsAbsentFromEnumeration",
+                            ),
+                        ),
+                        "Inherited source-time assessment is inconsistent",
+                    )
+                if "renderInvalidation" in inherited_update:
+                    from infinity_wiki_acquisition.render_invalidation import (
+                        assess_render_invalidation,
+                    )
+
+                    _require(
+                        inherited_update["renderInvalidation"]
+                        == assess_render_invalidation(
+                            entries.values(),
+                            recent_changes=inherited_update["recentChanges"],
+                            page_moves=inherited_update["pageMovesById"],
+                            absent_page_ids=inherited_update[
+                                "parentPageIdsAbsentFromEnumeration"
+                            ],
+                            site=site, language=language,
+                        ),
+                        "Inherited render invalidation audit is inconsistent",
+                    )
+            relationship_coverage = metadata.get(
+                "pageRelationshipEvidence",
+            )
+            relationship_rows = [
+                item["pageRelationships"] for item in entries.values()
+                if item["kind"] == "current-page"
+                and "pageRelationships" in item
+            ]
+            if relationship_coverage is not None:
+                from infinity_wiki_acquisition.page_relationships import (
+                    assess_relationship_coverage,
+                )
+
+                _require(
+                    parent is not None
+                    and (
+                        metadata.get("updateMode") == "verified-asset-version-refresh"
+                        or (
+                            metadata.get("historyCutoff") == "all-observed"
+                            and isinstance(inherited_update, dict)
+                            and inherited_update.get("updateMode")
+                            == "verified-asset-version-refresh"
+                        )
+                    )
+                    and len(relationship_rows) == sum(
+                        item["kind"] == "current-page"
+                        for item in entries.values()
+                    )
+                    and relationship_coverage == assess_relationship_coverage(
+                        entries.values(),
+                    ),
+                    "Page relationship coverage contradicts member evidence",
+                )
+            else:
+                _require(not relationship_rows,
+                         "Unreported MediaWiki page relationship observations")
             source_time = document["captureMetadata"].get("sourceTimeCoverage")
             if source_time is not None:
                 from infinity_wiki_acquisition.source_time_coverage import (

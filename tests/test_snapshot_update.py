@@ -468,3 +468,136 @@ def test_render_invalidation_audit_is_independently_verified(
     result.inventory.write_text(json.dumps(document), encoding="utf-8")
     with pytest.raises(SnapshotVerificationError, match="Render invalidation"):
         verify_snapshot(result.archive, result.manifest, result.inventory)
+
+
+def test_page_relationships_are_published_and_independently_verified(
+    tmp_path: Path, monkeypatch,
+):
+    parent = _build_parent(tmp_path)
+    _remote(monkeypatch, changed=True)
+    base_fetch = cli.fetch_site_bytes
+    queried_ids = []
+
+    def fetch(url, *, language, site, **kwargs):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if query.get("prop") == ["templates|categories"]:
+            page_ids = [int(item) for item in query["pageids"][0].split("|")]
+            queried_ids.extend(page_ids)
+            titles = {1: "Main Page", 2: "New Page", 4: "Additional Page"}
+            return json.dumps({"query": {"pages": [
+                {
+                    "pageid": page_id, "title": titles[page_id],
+                    "templates": [
+                        {"ns": 10, "title": "Template:Shared Card"},
+                    ] if page_id in {1, 2} else [],
+                    "categories": [
+                        {"ns": 14, "title": "Category:Troopers"},
+                    ] if page_id == 1 else [],
+                }
+                for page_id in page_ids
+            ]}}).encode()
+        return base_fetch(url, language=language, site=site, **kwargs)
+
+    monkeypatch.setattr(cli, "fetch_site_bytes", fetch)
+    result = _update(parent, tmp_path)
+    doc = verify_snapshot(result.archive, result.manifest, result.inventory)
+    assert queried_ids == [1, 2, 4]
+    coverage = doc["captureMetadata"]["pageRelationshipEvidence"]
+    assert coverage["pageCount"] == coverage["observedCount"] == 3
+    assert coverage["unknownCount"] == 0
+    assert coverage["templatePageCount"] == 2
+    assert coverage["categorizedPageCount"] == 1
+    assert coverage["renderCorrespondence"] == "not-verified"
+    assert coverage["directness"] == "not-established"
+    pages = {
+        member["page"]["url"]: member
+        for member in doc["members"] if member["kind"] == "current-page"
+    }
+    assert pages[ROOT]["pageRelationships"]["templates"] == [
+        {"ns": 10, "title": "Template:Shared Card"},
+    ]
+    assert pages[ROOT]["pageRelationships"]["categories"] == [
+        {"ns": 14, "title": "Category:Troopers"},
+    ]
+    doc["captureMetadata"]["pageRelationshipEvidence"]["directness"] = (
+        "verified-all-direct"
+    )
+    result.inventory.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="Page relationship coverage"):
+        verify_snapshot(result.archive, result.manifest, result.inventory)
+
+
+def test_history_upgrade_retains_verified_update_relationship_evidence(
+    tmp_path: Path, monkeypatch,
+):
+    from infinity_wiki_acquisition.snapshot_upgrade import (
+        upgrade_snapshot_with_history,
+    )
+
+    parent = _build_parent(tmp_path)
+    _remote(monkeypatch, changed=True)
+    refreshed = _update(parent, tmp_path)
+    original = verify_snapshot(
+        refreshed.archive, refreshed.manifest, refreshed.inventory,
+    )
+    page_titles = {
+        "Main Page": (1, 1001),
+        "New Page": (2, 1002),
+        "Additional Page": (4, 1004),
+    }
+
+    def history_fetch(url, *, language, site):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+        if query.get("prop") == ["revisions"]:
+            title = query["titles"][0].replace("_", " ")
+            page_id, oldid = page_titles[title]
+            return json.dumps({"query": {"pages": [{
+                "pageid": page_id, "title": title,
+                "revisions": [{
+                    "revid": oldid, "parentid": 0,
+                    "timestamp": "2026-10-01T12:00:00Z",
+                }],
+            }]}}).encode()
+        if "oldid" in query:
+            return f"<html>Historical {query['oldid'][0]}</html>".encode()
+        raise AssertionError(f"Unexpected current-content HTTP request: {url}")
+
+    monkeypatch.setattr(cli, "fetch_site_bytes", history_fetch)
+    upgraded = upgrade_snapshot_with_history(
+        refreshed.archive, refreshed.manifest, refreshed.inventory,
+        archive_directory=tmp_path / "upgraded-archives",
+        manifest_directory=tmp_path / "upgraded-manifests",
+        work_root=tmp_path / "upgraded-work",
+        now=datetime(2026, 11, 16, 16, tzinfo=timezone.utc),
+    )
+    document = verify_snapshot(
+        upgraded.archive, upgraded.manifest, upgraded.inventory,
+    )
+    capture = document["captureMetadata"]
+    assert capture["historyCutoff"] == "all-observed"
+    assert "updateMode" not in capture
+    assert capture["inheritedCurrentUpdateEvidence"] == original["captureMetadata"]
+    assert capture["pageRelationshipEvidence"] == original[
+        "captureMetadata"
+    ]["pageRelationshipEvidence"]
+    before = {
+        member["path"]: member["pageRelationships"]
+        for member in original["members"]
+        if member["kind"] == "current-page"
+    }
+    after = {
+        member["path"]: member["pageRelationships"]
+        for member in document["members"]
+        if member["kind"] == "current-page"
+    }
+    assert after == before
+    assert document["history"] is True
+    assert sum(member["kind"] == "revision" for member in document["members"]) == 3
+    capture["inheritedCurrentUpdateEvidence"]["renderInvalidation"][
+        "renderReusePolicy"
+    ] = "unjustified-html-reuse"
+    upgraded.inventory.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(SnapshotVerificationError, match="Inherited render invalidation"):
+        verify_snapshot(
+            upgraded.archive, upgraded.manifest, upgraded.inventory,
+        )

@@ -322,8 +322,24 @@ def upgrade_snapshot_with_history(
                     item["pageId"] = page_ids_by_url.get(item["url"])
 
         inventory_document["ignoredUrls"] = copy.deepcopy(parent["ignoredUrls"])
+        parent_capture = copy.deepcopy(parent["captureMetadata"])
+        if "updateMode" in parent_capture:
+            # The already verified parent update's change/reuse accounting
+            # describes *that* acquisition, not this new history enumeration.
+            # Retain it as provenance, not as a new update-mode assertion.
+            inherited_capture = {
+                key: parent_capture[key]
+                for key in (
+                    "httpHeadersAvailable", "mediaWikiPageIdsAvailable",
+                    "currentRevisionEvidence", "pageRelationshipEvidence",
+                )
+                if key in parent_capture
+            }
+            inherited_capture["inheritedCurrentUpdateEvidence"] = parent_capture
+        else:
+            inherited_capture = parent_capture
         inventory_document["captureMetadata"] = {
-            **copy.deepcopy(parent["captureMetadata"]),
+            **inherited_capture,
             "currentContentAcquiredAt": parent["captureMetadata"].get(
                 "currentContentAcquiredAt", parent["snapshot"]["acquiredAt"],
             ),

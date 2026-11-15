@@ -18,6 +18,9 @@ from typing import Any, Iterable
 from infinity_wiki_acquisition.asset_evidence import read_asset_evidence
 from infinity_wiki_acquisition.crawl_checkpoint import read_crawl_checkpoint
 from infinity_wiki_acquisition.current_revisions import load_current_revision_evidence
+from infinity_wiki_acquisition.page_relationships import (
+    assess_relationship_coverage, load_page_relationship_evidence,
+)
 from infinity_wiki_acquisition.source_time_coverage import assess_source_time_coverage
 from infinity_wiki_acquisition.page_evidence import read_page_evidence
 from infinity_wiki_acquisition.snapshot_provenance import load_snapshot_manifest
@@ -135,6 +138,9 @@ def build_snapshot_inventory(
             raise ValueError("Cannot inventory a crawl checkpoint with unresolved failures")
 
     current_revisions = load_current_revision_evidence(
+        work, site=site, language=language,
+    )
+    page_relationships = load_page_relationship_evidence(
         work, site=site, language=language,
     )
     source_urls: dict[str, list[str]] = {}
@@ -273,6 +279,15 @@ def build_snapshot_inventory(
                             f"Current revision observation does not match page: {path}"
                         )
                     entry["currentRevision"] = revision
+                if page_relationships is not None:
+                    observation = page_relationships.get(url)
+                    if (observation is None
+                            or observation["memberPath"] != path
+                            or observation["pageId"] != page_id):
+                        raise ValueError(
+                            f"Page relationship observation does not match page: {path}"
+                        )
+                    entry["pageRelationships"] = observation
             elif path in former_by_path:
                 kind = "historical-page"
                 former = former_by_path[path]
@@ -386,6 +401,9 @@ def build_snapshot_inventory(
             **({
                 "sourceTimeCoverage": assess_source_time_coverage(members),
             } if current_revisions is not None else {}),
+            **({
+                "pageRelationshipEvidence": assess_relationship_coverage(members),
+            } if page_relationships is not None else {}),
         },
         "parent": None,
         "members": members,

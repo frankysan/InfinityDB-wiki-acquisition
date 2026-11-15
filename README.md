@@ -275,6 +275,34 @@ Every current page is still fetched and rewritten after fresh discovery.
 The published ZIP/v3 manifest and inventory v1/v2 history contracts remain
 compatible; existing snapshots without this optional field still verify.
 
+**MediaWiki relationship observations (P2.4b):** Each `--update-from`
+also queries `prop=templates|categories` for freshly enumerated current
+page IDs, using bounded batches and complete API continuation. The new
+optional per-member `pageRelationships` evidence records the reported
+transcluded pages and category memberships (namespace and exact API title),
+numeric page identity, API title, query window and SHA-256 for each successful
+API response. An incomplete, malformed, redirected or mismatched API result
+stays explicitly unknown rather than publishing a partial list. The private
+`.wiki-page-relationships.json` work sidecar does not enter the ZIP.
+`pageRelationshipEvidence` records observation coverage; the verifier checks
+member identities, timestamps, list ordering and safe unknown semantics.
+
+The API can report transcluded pages, but these observations are **not**
+a verified direct/transitive render graph. They occur after the HTML crawl;
+Scribunto calls, module invocation, redirects, other namespaces, category
+membership changes during acquisition and missing RecentChanges retention
+can invalidate completeness. The invalidation audit separately lists
+API-observed template/module and category *candidates*, not proof that any
+earlier HTML response depended on those particular source versions.
+Current rendered HTML is still always fetched and rewritten; unchanged
+revision IDs and even complete API pagination never permit a skipped fetch.
+Inventory formats v1/v2, oldids and historical-only associations are unchanged.
+A later history upgrade of a verified update parent keeps its current-page
+relationship records unchanged, while placing the parent's update-only audit
+and accounting under `inheritedCurrentUpdateEvidence`. This is previous
+source evidence, **not** a newly observed dependency graph or an update of
+history-time HTML.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It
