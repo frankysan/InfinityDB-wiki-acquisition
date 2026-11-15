@@ -229,8 +229,9 @@ def verify_snapshot(
                           "manifestSha256", "inventorySha256"):
                 _digest(parent[field], f"parent.{field}")
             _string(parent["acquiredAt"], "parent.acquiredAt")
-            _require(parent["archiveName"] != archive_name
-                     and parent["archiveSha256"] != record["archiveSha256"],
+            # Distinct timestamped snapshots may legitimately contain
+            # identical deterministic ZIP bytes (no new revisions).
+            _require(parent["archiveName"] != archive_name,
                      "Parent snapshot cannot be the resulting archive")
             _require(type(parent["reusedMemberCount"]) is int
                      and parent["reusedMemberCount"] > 0,
@@ -242,22 +243,34 @@ def verify_snapshot(
                      and input_artifact.get("sha256") == parent["archiveSha256"],
                      "Provenance inputArtifact does not identify the parent ZIP")
             metadata = _object(document.get("captureMetadata"), "captureMetadata")
+            parent_history = metadata.get("parentHistory", False)
+            reused_revisions = metadata.get("reusedRevisionCount", 0)
+            _require(type(parent_history) is bool
+                     and type(reused_revisions) is int
+                     and 0 <= reused_revisions <= parent["reusedMemberCount"]
+                     and (parent_history or reused_revisions == 0),
+                     "Invalid inherited historical revision evidence")
+            current_at = _string(
+                metadata.get("currentContentAcquiredAt"), "currentContentAcquiredAt",
+            )
             _require(document["history"] is True
-                     and metadata.get("currentContentAcquiredAt") == parent["acquiredAt"]
+                     and (parent_history or current_at == parent["acquiredAt"])
                      and metadata.get("historyCutoff") == "all-observed",
                      "Archive-derived current/history acquisition evidence is inconsistent")
             history_at = _string(
                 metadata.get("historyRetrievedAt"), "historyRetrievedAt",
             )
             parent_time = datetime.fromisoformat(parent["acquiredAt"])
+            current_time = datetime.fromisoformat(current_at)
             history_time = datetime.fromisoformat(history_at)
             snapshot_time = datetime.fromisoformat(record["acquiredAt"])
             _require(all(value.tzinfo is not None
                          and value.utcoffset() is not None
-                         for value in (parent_time, history_time, snapshot_time))
-                     and parent_time <= history_time <= snapshot_time,
+                         for value in (current_time, parent_time, history_time, snapshot_time))
+                     and current_time <= parent_time <= history_time <= snapshot_time,
                      "Archive-derived acquisition chronology is inconsistent")
-            _require(parent["reusedMemberCount"] <= record["memberCount"] - 2,
+            max_reused = record["memberCount"] - (1 if parent_history else 2)
+            _require(parent["reusedMemberCount"] <= max_reused,
                      "Parent reuse count exceeds history snapshot size")
         site_key = _string(document["site"], "inventory.site")
         language = _string(document["language"], "inventory.language")

@@ -865,6 +865,7 @@ def download_wiki_history(
     site: WikiSite = DEFAULT_SITE,
     progress: Callable[[WikiHistoryProgress], None] | None = None,
     checkpoint_file: Path | None = None,
+    reuse_oldid: Callable[[WikiPage, str, int, int, str], bytes | None] | None = None,
 ) -> WikiHistoryResult:
     """Download rendered oldid revisions, checkpointing when requested."""
     _require_site_language(site, language)
@@ -874,6 +875,7 @@ def download_wiki_history(
         return download_history_checkpointed(
             pages, destination, language=language, site=site,
             progress=progress, checkpoint_file=checkpoint_file,
+            reuse_oldid=reuse_oldid,
         )
 
     files: set[Path] = set()
@@ -2030,7 +2032,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
         print(
-            f"Reused {upgraded.reused_members} parent members and acquired "
+            f"Reused {upgraded.reused_members} parent members "
+            f"({upgraded.reused_revisions} oldid revisions), archived "
             f"{upgraded.revision_count} history revisions -> {upgraded.archive}"
         )
         print(f"Snapshot provenance -> {upgraded.manifest}")

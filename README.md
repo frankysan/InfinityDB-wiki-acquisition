@@ -78,7 +78,7 @@ because their complete discovered-URL set was not recorded. Run one normal
 valid binary assets and creates checkpoints as it progresses.
 A missing or changed *checkpointed* saved file, or a site/language mismatch,
 fails closed rather than silently certifying incomplete work.
-### Upgrade a completed snapshot to history (P2.1)
+### Upgrade completed snapshots with history (P2.1–P2.2)
 
 A completed **non-history** snapshot with its matching v3 provenance JSON and
 v1 inventory can be upgraded into a *new* history-enabled snapshot without
@@ -102,25 +102,47 @@ The parent ZIP, manifest and inventory are checked by
 current-page and asset member is copied byte-for-byte into fresh work.
 Original page IDs, source URLs, captured HTTP evidence, mirrored byte hashes,
 references and ignored-URL evidence are retained in the new inventory.
-New MediaWiki revision lists and rendered oldid files are then downloaded.
+New MediaWiki revision lists are always enumerated. If the parent already
+contains history, previously archived rendered oldid bytes are reused when
+their **revision ID, parent ID, timestamp and previously recorded current-page
+association** agree with the fresh API enumeration. Missing oldids are
+downloaded. A different canonical title returned for the *same page URL*
+does not by itself invalidate a matching oldid; the new history index records
+the updated canonical title. This also supports multiple page aliases
+referencing the same global oldid without downloading it repeatedly.
+
+If an oldid changes identity, a prior oldid disappears from enumeration, or
+a recorded page/oldid association disappears, publication is blocked pending
+explicit reconciliation. A matching numeric oldid alone never proves a
+previously unseen URL is an alias. Current HTML/assets are never refreshed
+by this command; new or moved current pages belong to the later
+`--update-from` work (P2.3).
+
 The original files never change. The new v3 manifest records the parent ZIP
 as `inputArtifact`, and the v1 inventory records the exact parent ZIP,
-manifest and inventory hashes.
+manifest and inventory hashes. For history parents, the sidecar additionally
+records `parentHistory: true` and `reusedRevisionCount`. The new history
+index and revision-to-page metadata always reflect the **fresh** enumeration,
+even when rendered revision bytes were reused.
 
 **Identity boundary:** every inherited member must already be classified
 as a current page with an explicit source URL/title, or as a known asset.
-Unknown members might be missing page identities and block P2.1 instead of
-silently omitting their history. Conservative P1.4 inventories containing
+Unknown members might be missing page identities and block upgrading instead
+of silently omitting their history. In a history parent, oldid and history-index
+members are handled separately, never mistaken for current pages or assets.
+Conservative P1.4 inventories containing
 unknown members therefore need independent source-identity review first.
 
 **Time and cutoff semantics:** the original current HTML retains its
-*parent snapshot acquisition time*. The new inventory independently records
-`currentContentAcquiredAt` and `historyRetrievedAt`; the new manifest's
+*original acquisition time* across repeated history upgrades (rather than
+inheriting the most recent history archive's timestamp). The new inventory
+independently records `currentContentAcquiredAt` and `historyRetrievedAt`;
+the new manifest's
 `acquiredAt` is when the *new history snapshot* is built. The history scope is
 `all-observed`: fetch all revisions the source API advertises during the
 upgrade, **including revisions newer than the inherited current HTML**.
 There is no historical date cutoff or promise of an exact as-of-time corpus
-in P2.1. Date-bounded historical reconstructions need separately designed
+in P2.1/P2.2. Date-bounded historical reconstructions need separately designed
 source/coverage semantics; the command does not mislabel a partial history as
 complete.
 
@@ -155,8 +177,8 @@ checkpoint files are private work metadata, excluded from archives.
 
 The current `--retry-failed-only` switch applies to the current-page crawl
 checkpoint; history resumes automatically under `--include-history`.
-History upgrades from existing completed ZIPs remain planned in
-`docs/TODO.md`.
+Snapshot-derived history upgrades are supported as described above; resuming
+an *interrupted archive-derived* upgrade remains planned in `docs/TODO.md`.
 
 
 MediaWiki `srcset` candidates (including `<picture><source>`) are downloaded

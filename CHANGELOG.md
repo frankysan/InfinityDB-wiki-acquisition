@@ -47,6 +47,16 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Extended `--from-snapshot --include-history` to verified
+  history parents (P2.2). Previously archived oldid HTML is reused only
+  after a fresh MediaWiki revision enumeration confirms its immutable
+  revision identity and established page association. Shared revisions
+  across aliases are reused once, while changed canonical titles are
+  represented by regenerated history metadata. Missing historical coverage,
+  changed revision identities or lost alias associations block publication.
+  The new inventory records the count of reused oldids, maintains the
+  original current-content acquisition timestamp across upgrades, and
+  preserves parent hashes without altering the v3 ZIP/manifest contract.
 - **Acquisition:** Completed P2.1 archive-derived history upgrade via
   `infinity-wiki-snapshot --from-snapshot <zip> --include-history`. Verified
   existing non-history ZIP/provenance/inventory triples can now be reused

@@ -1,14 +1,14 @@
-"""P2.1: upgrade a verified non-history Wiki snapshot with revision history.
+"""P2: rebuild verified Wiki history snapshots from an archived parent.
 
-This operation uses the *current content bytes* and reviewed identities from
-the parent inventory; it does not crawl current pages again. It acquires all
-revisions advertised during the new history enumeration (no date cutoff).
-Only the newly created artifacts can be rolled back.
+Current pages/assets are copied byte-for-byte. An existing history parent's
+oldid content is reused only after matching newly enumerated revision identity.
+No original ZIP, manifest or inventory is modified.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shutil
@@ -33,6 +33,7 @@ class SnapshotUpgradeResult(NamedTuple):
     parent_archive: Path
     reused_members: int
     revision_count: int
+    reused_revisions: int = 0
 
 
 class SnapshotUpgradeIncomplete(ValueError):
@@ -50,9 +51,6 @@ class SnapshotUpgradeIncomplete(ValueError):
 def _reusable_parent_pages(document: dict[str, Any]) -> tuple[Any, ...]:
     """Require explicit, unambiguous page identities; never classify by name."""
     from infinity_wiki_acquisition.cli import WikiPage
-
-    if document["history"]:
-        raise ValueError("P2.1 accepts only non-history source snapshots (history reuse is P2.2)")
 
     pages: list[Any] = []
     page_urls: set[str] = set()
@@ -75,7 +73,14 @@ def _reusable_parent_pages(document: dict[str, Any]) -> tuple[Any, ...]:
             page_urls.add(url)
             page_paths.add(path)
             pages.append(WikiPage(url, path, title))
-        elif kind != "asset":
+        elif kind == "asset":
+            continue
+        elif document["history"] and kind in {"revision", "generated-index"}:
+            # History is reconstructed from a fresh API enumeration; the old
+            # index cannot be copied because titles, aliases or coverage may
+            # have changed.
+            continue
+        else:
             # An unknown member could be an unidentified HTML page whose
             # revisions would otherwise be skipped; refuse incomplete coverage.
             raise ValueError(
@@ -85,6 +90,23 @@ def _reusable_parent_pages(document: dict[str, Any]) -> tuple[Any, ...]:
     if not pages:
         raise ValueError("Source inventory contains no identified current wiki pages")
     return tuple(sorted(pages, key=lambda page: page.path))
+
+
+def _parent_revision_records(document: dict[str, Any]) -> dict[int, dict[str, Any]]:
+    """Recover verified oldids with their original page associations."""
+    if not document["history"]:
+        return {}
+    revisions: dict[int, dict[str, Any]] = {}
+    for member in document["members"]:
+        if member["kind"] != "revision":
+            continue
+        oldid = member["revision"]["oldid"]
+        if oldid in revisions:
+            raise ValueError(f"Duplicate parent oldid: {oldid}")
+        revisions[oldid] = member
+    if not revisions:
+        raise ValueError("History parent contains no indexed revisions")
+    return revisions
 
 
 def _publish_verified_inventory(
@@ -162,12 +184,15 @@ def upgrade_snapshot_with_history(
     new_manifest: Path | None = None
     new_inventory: Path | None = None
     try:
-        # Verification has already established portable, unique, regular
-        # members. Copy each member from the verified container, never extract
-        # directories or trust a filesystem path originating in the archive.
+        # Copy only the parent current pages/assets. Oldids are validated
+        # against the newly enumerated API identity *before* each reuse.
         members: list[Path] = []
+        parent_revisions = _parent_revision_records(parent)
+        reused_oldids: set[int] = set()
         with zipfile.ZipFile(source_archive) as source:
             for member in parent["members"]:
+                if member["kind"] not in {"current-page", "asset"}:
+                    continue
                 relative = member["path"]
                 target = work.joinpath(*relative.split("/"))
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -175,19 +200,75 @@ def upgrade_snapshot_with_history(
                     shutil.copyfileobj(contents, output)
                 members.append(target)
 
-        if progress is None:
-            progress = cli.ConsoleHistoryProgressReporter()
-        try:
-            history = cli.download_wiki_history(
-                pages, work, site=site, language=language,
-                checkpoint_file=work / HISTORY_CHECKPOINT_FILENAME,
-                progress=progress,
-            )
-        finally:
-            if hasattr(progress, "finish"):
-                progress.finish()
+            def reuse_oldid(page: Any, title: str, oldid: int,
+                            parentid: int, timestamp: str) -> bytes | None:
+                record = parent_revisions.get(oldid)
+                if record is None:
+                    return None
+                old_revision = record["revision"]
+                if (old_revision["parentid"], old_revision["timestamp"]) != (
+                    parentid, timestamp,
+                ):
+                    raise ValueError(f"Contradictory historical identity for oldid {oldid}")
+                # A renamed canonical title can still identify the same oldid
+                # when the requested page URL remains an archived association.
+                # Different URLs are NOT automatically treated as aliases.
+                if page.url not in {entry["url"] for entry in old_revision["pages"]}:
+                    return None
+                payload = source.read(record["path"])
+                if (len(payload) != record["size"] or
+                        hashlib.sha256(payload).hexdigest() != record["sha256"]):
+                    raise ValueError(f"Source oldid bytes changed: {oldid}")
+                reused_oldids.add(oldid)
+                return payload
+
+            if progress is None:
+                progress = cli.ConsoleHistoryProgressReporter()
+            try:
+                history = cli.download_wiki_history(
+                    pages, work, site=site, language=language,
+                    checkpoint_file=work / HISTORY_CHECKPOINT_FILENAME,
+                    progress=progress, reuse_oldid=reuse_oldid,
+                )
+            finally:
+                if hasattr(progress, "finish"):
+                    progress.finish()
         if history.failures:
             raise SnapshotUpgradeIncomplete(work, history.failures)
+        if parent_revisions:
+            present_oldids = {
+                int(path.stem)
+                for path in history.files
+                if path.parent.name == "oldid"
+                and path.parent.parent.name == "_history"
+            }
+            missing = set(parent_revisions) - present_oldids
+            if missing:
+                raise ValueError(
+                    "Previously archived oldids absent from newly enumerated "
+                    f"history: {sorted(missing)[:10]}; review redirects/moves "
+                    "or revision visibility before publishing"
+                )
+            # Revision IDs are globally unique on one Wiki, but sharing an
+            # oldid is not proof that an earlier *page association* survived.
+            # Check every parent (requested page URL, oldid) pair explicitly.
+            new_index = json.loads((work / "_history/index.json").read_text(encoding="utf-8"))
+            fresh_associations = {
+                (page["currentUrl"], revision["oldid"])
+                for page in new_index["pages"]
+                for revision in page["revisions"]
+            }
+            parent_associations = {
+                (page["url"], oldid)
+                for oldid, record in parent_revisions.items()
+                for page in record["revision"]["pages"]
+            }
+            vanished = parent_associations - fresh_associations
+            if vanished:
+                raise ValueError(
+                    "Previously archived page/oldid associations disappeared: "
+                    f"{sorted(vanished)[:5]}; review aliases and moves before publishing"
+                )
 
         history_retrieved_at = now or datetime.now().astimezone()
         members.extend(history.files)
@@ -209,7 +290,15 @@ def upgrade_snapshot_with_history(
             language=language, root_url=root_url, include_history=True,
             pages=pages, crawl_checkpoint=None,
         )
-        inherited = {item["path"]: item for item in parent["members"]}
+        inherited = {
+            item["path"]: item for item in parent["members"]
+            if item["kind"] in {"current-page", "asset"}
+        }
+        parent_reused_oldids = {
+            item["path"]: item for item in parent["members"]
+            if item["kind"] == "revision"
+            and item["revision"]["oldid"] in reused_oldids
+        }
         page_ids_by_url = {
             item["page"]["url"]: item["sourceIdentity"].get("pageId")
             for item in parent["members"] if item["kind"] == "current-page"
@@ -222,16 +311,26 @@ def upgrade_snapshot_with_history(
                     raise ValueError(f"Reused source content changed: {member['path']}")
                 inventory_document["members"][index] = copy.deepcopy(previous)
             elif member["kind"] == "revision":
-                # Carry forward enumerated page IDs when already known.
+                if member["path"] in parent_reused_oldids:
+                    old = parent_reused_oldids[member["path"]]
+                    if member["sha256"] != old["sha256"] or member["size"] != old["size"]:
+                        raise ValueError(f"Reused revision content changed: {member['path']}")
+                # Metadata is deliberately rebuilt from the refreshed history
+                # index, not copied from old aliases or canonical titles.
+                # Carry forward known page IDs for the stable request URLs.
                 for item in member["sourceIdentity"]["pageIds"]:
                     item["pageId"] = page_ids_by_url.get(item["url"])
 
         inventory_document["ignoredUrls"] = copy.deepcopy(parent["ignoredUrls"])
         inventory_document["captureMetadata"] = {
             **copy.deepcopy(parent["captureMetadata"]),
-            "currentContentAcquiredAt": parent["snapshot"]["acquiredAt"],
+            "currentContentAcquiredAt": parent["captureMetadata"].get(
+                "currentContentAcquiredAt", parent["snapshot"]["acquiredAt"],
+            ),
             "historyRetrievedAt": history_retrieved_at.isoformat(timespec="seconds"),
             "historyCutoff": "all-observed",
+            "parentHistory": parent["history"],
+            "reusedRevisionCount": len(reused_oldids),
         }
         inventory_document["parent"] = {
             "archiveName": source_archive.name,
@@ -240,7 +339,7 @@ def upgrade_snapshot_with_history(
             "manifestSha256": sha256_file(source_manifest),
             "inventorySha256": sha256_file(source_inventory),
             "acquiredAt": parent["snapshot"]["acquiredAt"],
-            "reusedMemberCount": len(inherited),
+            "reusedMemberCount": len(inherited) + len(reused_oldids),
         }
         new_inventory = _publish_verified_inventory(
             inventory_document, new_archive, new_manifest,
@@ -263,5 +362,6 @@ def upgrade_snapshot_with_history(
         pass  # The published output is complete; leftover work is inspectable.
     return SnapshotUpgradeResult(
         new_archive, new_manifest, new_inventory,
-        source_archive, len(inherited), history.revision_count,
+        source_archive, len(inherited) + len(reused_oldids),
+        history.revision_count, len(reused_oldids),
     )

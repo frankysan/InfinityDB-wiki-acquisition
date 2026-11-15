@@ -93,6 +93,28 @@ Agents start with [AGENTS.md](../AGENTS.md).
   partial history fail closed. Archive-derived resume and historical
   as-of-time reconstruction remain outside P2.1 scope; retained failed
   staging is inspection evidence, not an automatic resume authorization.
+- P2.2 also accepts a verified history parent with explicitly identified
+  current pages/assets and a consistent indexed oldid set. Copy only
+  current-page/asset members at staging time; never copy the parent's history
+  index as if it were current. Each oldid is reusable only after fresh
+  MediaWiki enumeration confirms its ID, parentid, timestamp, and the
+  requested page URL's *archived* association. The canonical title returned
+  by the API may differ across a stable page URL (move/redirect), but such
+  title drift must be represented in a newly generated index, not by
+  copying old revision metadata. Different URLs are not automatically
+  equivalent aliases: if an archived oldid or a previous page/oldid
+  association disappears from fresh enumeration, fail without publishing.
+  Reject conflicting oldid identities across two newly enumerated pages.
+  New revisions must still be downloaded; reused rendered revision bytes
+  are hash-checked against the verified parent inventory.
+  Preserve the original current-content acquisition time across history
+  generations and separately count inherited oldids in
+  `captureMetadata.reusedRevisionCount`. A new timestamped snapshot can
+  legitimately have the same deterministic ZIP SHA-256 as its parent when
+  its contents have not changed: the archive name and chronology distinguish
+  the artifacts, and the v3 `inputArtifact` binds the immediate parent.
+  This is not a page-move/current-content refresh mechanism (P2.3) or
+  archive-derived checkpoint resume (P2.5).
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

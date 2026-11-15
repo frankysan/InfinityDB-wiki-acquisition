@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 HISTORY_CHECKPOINT_FILENAME = ".wiki-history-checkpoint.json"
 HISTORY_CHECKPOINT_FORMAT = "InfinityDB wiki history checkpoint"
@@ -154,6 +154,7 @@ def download_history_checkpointed(
     site: Any,
     progress: Any,
     checkpoint_file: Path,
+    reuse_oldid: Callable[[Any, str, int, int, str], bytes | None] | None = None,
 ) -> Any:
     """Resume revision-list pagination and oldid downloads from private state.
 
@@ -190,6 +191,14 @@ def download_history_checkpointed(
     saved: dict[str, list[str | int]] = state["saved"]
     completed_pages: list[dict[str, object]] = state["completedPages"]
     failures: list[Any] = []
+    seen_revision_metadata: dict[int, tuple[int, str]] = {}
+    for completed_page in completed_pages:
+        for revision in completed_page["revisions"]:
+            key = revision["oldid"]
+            identity = (revision["parentid"], revision["timestamp"])
+            existing = seen_revision_metadata.setdefault(key, identity)
+            if existing != identity:
+                raise ValueError(f"Conflicting checkpoint oldid identity: {key}")
 
     def store() -> None:
         write_history_checkpoint(checkpoint_file, state)
@@ -238,6 +247,14 @@ def download_history_checkpointed(
                     revision.oldid in known_ids for revision in batch
                 ):
                     raise ValueError(f"Duplicate revision ID while reading {page.url}")
+                for revision in batch:
+                    previous = seen_revision_metadata.get(revision.oldid)
+                    if previous is not None and previous != (
+                        revision.parentid, revision.timestamp,
+                    ):
+                        raise ValueError(
+                            f"Conflicting oldid identity across wiki pages: {revision.oldid}"
+                        )
             except Exception as exc:
                 failures.append(
                     cli.WikiDownloadFailure(
@@ -295,9 +312,17 @@ def download_history_checkpointed(
                 if str(oldid) not in saved:
                     if not target.is_file():
                         try:
-                            payload = cli.fetch_site_bytes(
-                                source_url, language=language, site=site,
+                            payload = (
+                                reuse_oldid(
+                                    page, active["canonicalTitle"],
+                                    oldid, parentid, timestamp,
+                                )
+                                if reuse_oldid is not None else None
                             )
+                            if payload is None:
+                                payload = cli.fetch_site_bytes(
+                                    source_url, language=language, site=site,
+                                )
                         except Exception as exc:
                             failures.append(
                                 cli.WikiDownloadFailure(
@@ -322,6 +347,8 @@ def download_history_checkpointed(
                 }
             )
 
+        for oldid, parentid, timestamp in revisions:
+            seen_revision_metadata[oldid] = (parentid, timestamp)
         completed_pages.append(
             {
                 "currentPath": page.path,
