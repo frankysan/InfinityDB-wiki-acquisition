@@ -305,11 +305,13 @@ infinity-wiki-snapshot `
 
 ### Repair an older Infinity Wiki case-collision checkpoint
 
-If an earlier English or Spanish Infinity Wiki run failed because two
-source titles differed only by capitalization (for example, `No_LoF` and
-`No_Lof`), **do not retry its old work directory directly after upgrading
-the downloader**. The page-path mapping has changed. Existing pages also
-contain links written using the previous mapping.
+If an earlier English or Spanish Infinity Wiki run failed because source
+titles differed only by capitalization (for example, `No_LoF` and
+`No_Lof`), or because a Unicode title and its ASCII transliteration
+mapped to the same portable filename, **do not retry its old work
+directory directly after upgrading the downloader**. The page-path
+mapping has changed. Existing pages also contain links written using
+the previous mapping.
 
 For a fresh, non-history crawl started with `--source-replay-dir`, use the
 offline repair tool to **create a new work directory** from its committed
@@ -582,6 +584,9 @@ authority.
   verification design, identity rules, asset/revision evidence and testing.
 - [Acquisition roadmap](docs/TODO.md) — completed phases and open research
   limitations.
+- [Human Sphere / Rules Wiki parity audit](docs/SITE_PARITY_AUDIT.md) —
+  source-specific differences, current coverage limitations, portable
+  filename safeguards and planned acceptance checks.
 - [Archive recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md) —
   recovery commands, checkpoint guarantees and synthetic acceptance matrix.
 - [Rendered-HTML freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md) —

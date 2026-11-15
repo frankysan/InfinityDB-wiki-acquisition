@@ -91,6 +91,51 @@ def test_infinity_wiki_case_variants_have_distinct_portable_paths():
     assert f'href="{canonical}"' in html
 
 
+def test_rules_wiki_unicode_page_titles_remain_portably_distinct():
+    from infinity_wiki_acquisition.snapshot_archive import validate_archive_member_paths
+
+    base = "https://infinitythewiki.com/"
+    accented = cli.local_relative_path(base + "Ca%C3%B1on", site=SITE)
+    ascii_title = cli.local_relative_path(base + "Canon", site=SITE)
+    decomposed = cli.local_relative_path(base + "Can%CC%83on", site=SITE)
+    assert accented.startswith("Canon__u_")
+    assert ascii_title == "Canon"
+    assert accented != ascii_title
+    assert decomposed == accented
+    assert cli.local_relative_path(base + "Ca%C3%B1on", site=SITE, os_name="Linux") == accented
+    validate_archive_member_paths([accented, ascii_title])
+
+    spanish = cli.local_relative_path(
+        "https://infinitythewiki.com/es/Ca%C3%B1on",
+        site=SITE,
+    )
+    assert spanish == "es/" + accented
+    assert cli.local_relative_path(SITE.root_urls["es"], site=SITE) == "es/index.html"
+    assert cli.local_relative_path(SITE.root_urls["en"], site=SITE) == "index.html"
+
+    html = cli.rewrite_html_links(
+        '<a href="/es/Ca%C3%B1on">Accented</a>'
+        '<a href="/es/Canon">Plain</a>',
+        SITE.root_urls["es"], site=SITE, language="es",
+    )
+    assert f'href="{accented}"' in html
+    assert 'href="Canon"' in html
+
+
+def test_rules_wiki_unicode_asset_names_are_not_transliterated_into_collisions():
+    from infinity_wiki_acquisition.snapshot_archive import validate_archive_member_paths
+
+    base = "https://infinitythewiki.com/images/"
+    title = cli.local_relative_path(base + "Ca%C3%B1on.png", site=SITE, asset=True)
+    plain = cli.local_relative_path(base + "Canon.png", site=SITE, asset=True)
+    assert title.startswith("images/Canon__u_")
+    assert title.endswith(".png")
+    assert plain == "images/Canon.png"
+    assert title.casefold() != plain.casefold()
+    assert title == cli.local_relative_path(base + "Ca%C3%B1on.png", site=SITE, asset=True, os_name="Linux")
+    validate_archive_member_paths([title, plain])
+
+
 def test_fresh_case_collision_crawl_rewrites_links_and_saves_both(
     tmp_path, monkeypatch,
 ):

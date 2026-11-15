@@ -58,7 +58,8 @@ Agents start with [AGENTS.md](../AGENTS.md).
   collisions as source-format concerns. Preserve true source identities
   rather than collapsing pages by similarity.
   Infinity Wiki now applies the existing deterministic case-variant
-  disambiguation to page-title components, preserving the ordinary
+  disambiguation to page-title components, and Unicode/NFC-based
+  disambiguation to page and asset components, preserving the ordinary
   root and /es/ and /wiki/ routing prefixes. Thus a title such as
   `No_LoF` receives a stable `__u_<sha256-prefix>` path distinct
   from conventional `No_Lof` on Windows and Linux. The full URL,

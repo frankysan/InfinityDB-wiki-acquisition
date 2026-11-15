@@ -47,6 +47,12 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Fixed
 
+- **Acquisition:** Rules Wiki now also disambiguates internationalized page
+  and binary-asset filenames with NFC-based source-identity suffixes,
+  matching Human Sphere's existing protection against Unicode-to-ASCII
+  transliteration collisions. Spanish/English root paths and normal title
+  spellings remain unchanged; old checkpointed work must use the
+  original-HTML replay repair before resuming under a changed path mapping.
 - **Acquisition:** Infinity Wiki now distinguishes differently capitalized
   source page titles using stable portable filename suffixes, just as
   Human Sphere already did. Conventional root/language-routing paths
@@ -54,6 +60,12 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Audited Human Sphere-specific source configuration and
+  portable-path adaptations against the English/Spanish Rules Wiki. The
+  cross-site parity report identifies missing fresh `allpages` coverage,
+  potential extensionless page/directory collisions, source-dependent
+  thumbnail, namespace and 404 behavior, and the follow-up validation
+  plan. No source-site assumptions were silently copied.
 - **Acquisition:** Added offline recovery for previously interrupted
   Infinity Wiki crawls with Windows case-insensitive page-title
   collisions (e.g. `No_LoF` versus `No_Lof`). A new read-only-source

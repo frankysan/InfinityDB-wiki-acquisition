@@ -1226,13 +1226,16 @@ def local_relative_path(
             directory += "/"
         leaf = sanitize_relative_path(
             normalized, os_name=path_os_name,
+            disambiguate_unicode=True,
             disambiguate_page_case=not generated_index,
         )
         return directory + leaf
     return sanitize_relative_path(
         normalized,
         os_name=path_os_name,
-        disambiguate_unicode=site.key == HUMAN_SPHERE_SITE.key,
+        # Both MediaWiki sites may have international page/upload names.
+        # Avoid transliteration collisions on case-insensitive filesystems.
+        disambiguate_unicode=True,
         disambiguate_page_case=site.key == HUMAN_SPHERE_SITE.key and not asset,
     )
 
