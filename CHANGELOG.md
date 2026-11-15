@@ -60,6 +60,18 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added an opt-in `--allpages` mode for fresh
+  English/Spanish Rules Wiki acquisitions, retaining checkpointed
+  continuation, numeric page IDs, an explicit resume-mode receipt and
+  orphan-page discovery without altering existing link-only defaults.
+  The existing v3 manifest and v1/v2 inventory contracts are unchanged.
+- **Acquisition:** Added bounded live Rules Wiki API probing and an
+  independently verified, read-only snapshot-versus-allpages comparison.
+  Both en/es deployments provided a 500-entry first batch with numeric
+  IDs on 2026-11-15; the English API had 650 total main-namespace pages,
+  112 absent from the verified 599-current-page link-only snapshot.
+  A future allpages-complete archive needs a new acquisition/update;
+  the baseline ZIP remains immutable.
 - **Acquisition:** Audited Human Sphere-specific source configuration and
   portable-path adaptations against the English/Spanish Rules Wiki. The
   cross-site parity report identifies missing fresh `allpages` coverage,

@@ -32,7 +32,7 @@ These protections **do not** need separate Rules Wiki implementations:
 
 | Area | Human Sphere configuration/behavior | Rules Wiki current behavior | Assessment |
 | --- | --- | --- | --- |
-| **Fresh discovery** | `enumerate_pages=True`: paginated MediaWiki `allpages` plus outgoing links | `enumerate_pages=False`: root/link crawl only; `--update-from` separately forces `allpages` | **High: coverage gap**. An orphaned page can be absent from an otherwise successful fresh Rules Wiki archive. Current revision and relationship API observations may also lack numeric allpages IDs. Confirm both en/es API behavior before enabling enumeration; a history-only upgrade does *not* add missing current pages |
+| **Fresh discovery** | `enumerate_pages=True`: paginated MediaWiki `allpages` plus outgoing links | Link-only remains the fresh default, with opt-in `--allpages`; `--update-from` also forces it | **P3.3 implemented:** both en/es API endpoints returned positive IDs. English live comparison found 650 main-namespace pages, including 112 URLs absent from the 599-page verified link-only snapshot. `--allpages` supports checkpointed continuation and requires page IDs; a history-only upgrade still cannot discover pages absent from its parent |
 | **Case-only titles** | Conventional title name retained; other capitalization gets a stable `__u_<hash>` page filename | Now uses the same policy for page title components, preserving `/`, `/es/` and legacy `/wiki/` routing directories | **Shared/fixed previously**. `No_LoF` and `No_Lof` now have separate portable names |
 | **Unicode versus ASCII** | Non-ASCII page and asset names receive stable NFC-based disambiguation instead of colliding with ASCII transliterations | Previously no Unicode disambiguation; **enabled for Rules Wiki page and asset paths in this review** | **Fixed**. E.g. `Ca%C3%B1on` and `Canon` are distinct on Windows/Linux; Unicode normalization is tested |
 | **Page/directory collisions** | `page_path_suffix=".html"` separates page `/Foo` from descendants `/Foo/Bar` | Page paths are extensionless: `Foo` and `Foo/Bar` can require a filesystem file and directory with the same name | **High: open**. Fails rather than safely mirroring both. Needs a reviewed deterministic path scheme and explicit migration of completed work/snapshots; copying the Human Sphere suffix blindly would change every Rules Wiki page path |
@@ -45,26 +45,52 @@ These protections **do not** need separate Rules Wiki implementations:
 | **Courtesy pacing** | 0.5 s per source request | No configured delay; common HTTP backoff still retries transient failures | **Operational difference**, not a known bug; revisit based on source limits or real 429/503 observations |
 | **Localization / output** | English only, `HUMAN-SPHERE`, page `.html` suffix | Separate en/es wiki/API roots, `WIKI-en`/`WIKI-es`, extensionless pages | **Intentional**. Preserve correct separate source languages, paths, and archive identities |
 
-### Why allpages is the most significant coverage difference
+### P3.3 observed API coverage and new opt-in full discovery
 
-The fresh Rules Wiki crawl seeds only its configured root URL when
-`INFINITY_WIKI_SITE.enumerate_pages=False`. The Human Sphere fresh crawl
-uses the `list=allpages` API and retains numeric page IDs. The later
-`--update-from` workflow independently forces allpages, but
-`--from-snapshot --include-history` *only enumerates history for the
-parent's existing pages*. A completed link-only snapshot therefore
-cannot be described as complete main-namespace coverage without additional
-evidence. MediaWiki's
-[allpages API](https://www.mediawiki.org/wiki/API:Allpages)
-can enumerate a namespace using continuation tokens, subject to each
-deployment's actual API availability.
+The original link-based Rules Wiki snapshot `WIKI-en 20261115-223808`
+independently verified **820 total members and 599 current HTML pages**,
+including its original-source replay companion. On 2026-11-15 a
+separate read-only source API comparison observed **650 English
+main-namespace pages**, with **538 exact URL matches and 112 absent**
+from the earlier link-only snapshot. There were no conflicting known
+numeric IDs, but those 538 matched original archived pages lacked
+independently enumerated page IDs. **61 archived HTML URLs** were not
+listed by the main-namespace API (potentially other namespaces and the
+separate home route); they are not automatically false pages.
+This later source observation cannot establish the original archive's
+as-of-time source completeness. No original snapshot bytes were changed.
 
-**Recommended sequence:** finish/verify the in-progress current crawl as a
-link-reachable snapshot; independently establish working en/es allpages
-coverage and page-ID semantics; implement/test an intentional full-discovery
-mode or policy; then obtain an allpages-complete current snapshot *before
-calling a history-upgraded artifact comprehensive*. Do not change the
-scope/mapping of the already-running work in place.
+Both deployed language endpoints were confirmed with bounded, read-only
+API requests: `https://infinitythewiki.com/api.php` (English) and
+`https://infinitythewiki.com/wiki-es/api.php` (Spanish) each returned
+a first main-namespace batch of 500 titles with positive page IDs and
+an `apcontinue` token. The complete English listing was enumerated;
+a full Spanish listing has **not** yet been compared with an actual
+Spanish archive. See MediaWiki's
+[allpages API](https://www.mediawiki.org/wiki/API:Allpages).
+
+New `--allpages` is explicitly opt-in for **fresh Rules Wiki runs**,
+rather than silently changing existing link-only default behavior
+while P3.4 portable filename work remains. The original crawl
+checkpoints retain per-batch `apcontinue`, required source URLs and
+numeric page IDs; strict mode requires every allpages title to carry
+a valid positive ID and detects conflicting mappings. A private
+`.wiki-fresh-discovery.json` receipt prevents an interrupted
+full-discovery crawl from resuming as link-only or vice versa.
+Tests prove inclusion of an unlinked page, continuation recovery,
+English/Spanish source routing, snapshot and replay verification, and
+subsequent history upgrade without redownloading parent current HTML.
+The standalone `tools.audit_rules_allpages --live` command compares
+independently verified snapshot members to current source API identities
+without fetching HTML; `tools.probe_rules_allpages` checks one API
+batch per requested language.
+
+**Recommended sequence:** preserve the verified link-only parent;
+use an explicit `--update-from` (which already forces complete
+main-namespace enumeration) or create a new `--allpages` fresh
+snapshot, verify all artifacts, and only then call a history upgrade
+comprehensive for its observed page scope. Neither method proves
+atomic source time or template/module rendering freshness.
 
 ### Portable paths and migration
 
@@ -91,10 +117,11 @@ remains fail closed in the interim.
 
 ## Next steps
 
-1. **High:** Verify Rules Wiki English and Spanish `allpages` access and
-   compare observed page IDs/title sets against the fresh link crawl.
-   Decide the desired default discovery coverage and provide an explicit
-   clean migration/test path. Preserve existing snapshot lineage.
+1. **P3.3 implemented:** English/Spanish API probes, English
+   archive-versus-source coverage comparison and an explicit opt-in
+   full-discovery mode are complete. For actual acceptance, run a full
+   source update/new `--allpages` snapshot and independently verify its
+   artifacts; a full Spanish archive comparison remains unperformed.
 2. **High:** Design Rules Wiki page-versus-directory-safe filenames for
    subpage titles without breaking index/language routes or portable ZIP
    hashes. Explicitly test on Windows/Linux, root paths, link rewriting,

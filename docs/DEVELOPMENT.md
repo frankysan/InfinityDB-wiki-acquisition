@@ -98,6 +98,34 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P3.3 full Rules Wiki discovery is selectable on **new fresh** runs via
+  `--allpages`; a link-only fresh Rules Wiki crawl remains the default
+  pending P3.4 filename-path review. Human Sphere already uses paginated
+  `allpages` by default, and all `--update-from` runs force it. The
+  Rules Wiki English/Spanish main-namespace APIs were probed on
+  2026-11-15; both supplied positive page IDs and continuation. The
+  independently verified `WIKI-en 20261115-223808` link-only snapshot
+  contained 599 current HTML pages; a later observed 650-page English
+  main-namespace API enumeration had 112 exact URL absences and 538
+  matches. This is observational coverage, **not** an atomic source-time
+  proof or an automated archive migration; see
+  `docs/SITE_PARITY_AUDIT.md`.
+  `--allpages` requires a numeric page ID for each returned main-namespace
+  title, rejects reused IDs for different URLs and invalid namespace
+  records, and persists the established v2 crawl checkpoint's
+  `apcontinue` before fetching pages. The new private
+  `.wiki-fresh-discovery.json` receipt binds site, language and
+  discovery mode so an interrupted full-scope run cannot silently
+  resume as link-only or vice versa. Existing link-only checkpoints
+  without a receipt retain their normal semantics; promotion to
+  allpages requires a **new run**. Parent-derived modes do not accept
+  `--allpages` because current updates already use forced allpages
+  and history-only upgrades do not fetch current pages. The optional
+  `tools.audit_rules_allpages --live` compares exact URLs and
+  independently observed page IDs to a fully verified snapshot and
+  prints an observational report; `tools.probe_rules_allpages`
+  performs only one API batch per requested language. Neither command
+  fetches page HTML, mutates sources or authorizes reuse.
 - P2.5a history-upgrade resume is explicitly enabled for
   `--from-snapshot --include-history --resume-work <work>` and the
   corresponding `upgrade_snapshot_with_history(..., resume_work=...)`.

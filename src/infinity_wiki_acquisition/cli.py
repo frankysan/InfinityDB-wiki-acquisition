@@ -816,6 +816,8 @@ def fetch_all_page_title_batch(
         title = record.get("title")
         if not isinstance(title, str) or not title:
             raise ValueError(f"MediaWiki allpages entry has no title for {site.label}")
+        if record.get("ns", 0) != 0:
+            raise ValueError(f"MediaWiki allpages returned a non-main namespace: {title!r}")
         page_id = record.get("pageid")
         if page_id is not None and (type(page_id) is not int or page_id <= 0):
             raise ValueError(f"Invalid MediaWiki page ID for {title!r}")
@@ -1579,6 +1581,7 @@ def download_wiki(
     checkpoint_file: Path | None = None,
     retry_failed_only: bool = False,
     force_allpages: bool = False,
+    require_page_ids: bool = False,
     asset_fetch: Callable[[str], bytes] | None = None,
     retain_source_html: bool = False,
 ) -> WikiDownloadResult:
@@ -1596,6 +1599,8 @@ def download_wiki(
         raise ValueError("--retry-failed-only requires a crawl checkpoint")
 
     existing_checkpoint = checkpoint_file is not None and checkpoint_file.is_file()
+    if require_page_ids and not (site.enumerate_pages or force_allpages):
+        raise ValueError("Required allpages IDs need complete enumeration")
     if existing_checkpoint or retry_failed_only:
         state = read_crawl_checkpoint(
             checkpoint_file,
@@ -1609,6 +1614,8 @@ def download_wiki(
         enumeration_continuation: str | None = state.get("enumerationContinuation")
         discovered_assets = dict(state["discovered"])
         page_ids: dict[str, int] = dict(state.get("pageIds", {}))
+        if require_page_ids and len(set(page_ids.values())) != len(page_ids):
+            raise ValueError("Allpages checkpoint has conflicting numeric page IDs")
         required_urls = set(state["required"])
         saved_records: dict[str, list[str | int]] = dict(state["saved"])
         saved: set[Path] = {
@@ -1735,7 +1742,18 @@ def download_wiki(
                 )
                 required_urls.add(url)
                 page_id = getattr(title, "page_id", None)
+                if require_page_ids and (type(page_id) is not int or page_id <= 0):
+                    raise ValueError(
+                        f"Allpages did not supply a positive numeric page ID for {title!r}"
+                    )
                 if page_id is not None:
+                    if require_page_ids and any(
+                        previous_id == page_id and previous_url != url
+                        for previous_url, previous_id in page_ids.items()
+                    ):
+                        raise ValueError(
+                            f"Conflicting allpages URL for numeric page ID {page_id}"
+                        )
                     old_id = page_ids.get(url)
                     if old_id is not None and old_id != page_id:
                         raise ValueError(f"Conflicting enumerated page ID for {url}")
@@ -2081,6 +2099,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Wiki language to mirror where supported (default: en; inferred for --from-snapshot)",
     )
     parser.add_argument(
+        "--allpages",
+        action="store_true",
+        help=(
+            "Fresh crawl only: enumerate the MediaWiki main namespace with "
+            "paginated allpages, then follow linked assets/pages. Requires "
+            "page IDs for Rules Wiki; interrupted runs must resume with "
+            "the same flag. Existing link-only snapshots are unchanged."
+        ),
+    )
+    parser.add_argument(
         "--include-history",
         action="store_true",
         help=(
@@ -2163,6 +2191,14 @@ def _print_recovery_notes(exc: BaseException) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.allpages and (args.update_from is not None
+                          or args.from_snapshot is not None):
+        print(
+            "ERROR: --allpages is only for fresh acquisitions; "
+            "--update-from already enumerates current pages",
+            file=sys.stderr,
+        )
+        return 1
     if args.update_from is not None:
         if (args.from_snapshot is not None or args.retry_failed_only):
             print(
@@ -2310,6 +2346,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     site = WIKI_SITES[args.site or DEFAULT_SITE.key]
+    if args.allpages and site.key != INFINITY_WIKI_SITE.key:
+        print(
+            "ERROR: --allpages is a Rules Wiki opt-in; "
+            "Human Sphere already uses allpages by default",
+            file=sys.stderr,
+        )
+        return 1
     args.language = args.language or "en"
     try:
         _require_site_language(site, args.language)
@@ -2347,6 +2390,14 @@ def main(argv: list[str] | None = None) -> int:
                 include_history=args.include_history,
             )
         assert staging_path is not None
+        from infinity_wiki_acquisition.fresh_discovery import (
+            ensure_fresh_discovery_mode,
+        )
+
+        ensure_fresh_discovery_mode(
+            staging_path, site=site.key, language=args.language,
+            full_allpages=args.allpages, resume=args.resume_work is not None,
+        )
         try:
             result = download_wiki(
                 root_url,
@@ -2356,6 +2407,8 @@ def main(argv: list[str] | None = None) -> int:
                 progress=progress,
                 checkpoint_file=staging_path / CHECKPOINT_FILENAME,
                 retry_failed_only=args.retry_failed_only,
+                **({"force_allpages": True, "require_page_ids": True}
+                   if args.allpages else {}),
                 **({"retain_source_html": True}
                    if args.source_replay_dir is not None else {}),
             )

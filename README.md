@@ -98,6 +98,23 @@ For Spanish, substitute `--language es`. For Human Sphere, use:
 infinity-wiki-snapshot --site human-sphere --language en
 ```
 
+To enumerate **all main-namespace Rules Wiki pages**, including pages not
+linked from the home page, explicitly add `--allpages`. Both English and
+Spanish Rules Wiki APIs have been probed for main-namespace titles and page
+IDs; Human Sphere already uses allpages by default:
+
+```powershell
+infinity-wiki-snapshot --site infinity-wiki --language en --allpages
+```
+
+Until the remaining Rules Wiki filename/subpage migration is reviewed, the
+fresh Rules Wiki default remains its existing link-based crawl. The
+`--allpages` option is only for **new, fresh** Rules Wiki acquisitions.
+It checkpoints MediaWiki's `apcontinue` token and requires positive page
+IDs. Resume with `--allpages` as well; a previous link-only work directory
+cannot be promoted into full discovery. An `--update-from` run already
+forces allpages for either source.
+
 To retain the exact **original current-page HTML** in an additional portable
 companion ZIP for independent link-rewrite verification, opt in **from the
 start**:
@@ -111,6 +128,11 @@ historical oldid pages, and does **not** enable conditional HTML download
 skipping.
 
 ### B. Upgrade a completed non-history snapshot to include history
+
+If comprehensive Rules Wiki main-namespace history is the goal,
+first acquire a fresh `--allpages` snapshot or perform a verified
+`--update-from` refresh of a link-only parent. A history-only upgrade
+does **not** discover pages missing from its parent.
 
 First complete the fresh run and identify its ZIP, matching provenance JSON
 and inventory JSON (paths described in [section 7](#7-artifacts-provenance-and-verification)).
@@ -190,6 +212,7 @@ placeholders, not literal characters.
 | --- | --- | --- |
 | `--site {infinity-wiki,human-sphere}` | `infinity-wiki` | Select the source wiki. For parent-derived runs it is inferred; an explicitly supplied value must match the parent. |
 | `--language {en,es}` | `en` | Select the wiki language. Human Sphere is English-only. For parent-derived runs, source language is inferred unless explicitly provided. |
+| `--allpages` | Off for fresh Rules Wiki; Human Sphere already enumerates | Fresh Rules Wiki only. Require complete paginated main-namespace enumeration and positive numeric page IDs before page/asset crawling. A private work receipt binds the selection across resume. Cannot combine with `--from-snapshot` or `--update-from`. |
 | `--include-history` | Off | In a fresh run, download every advertised rendered oldid revision. **Required** with `--from-snapshot`. With `--update-from`, it is valid only if the parent already contains history; a history parent is preserved even without the flag. |
 | `--from-snapshot PATH` | Not set | Upgrade a verified, complete snapshot to a new history archive; **must** accompany `--include-history`. Works with both non-history and history-enabled parents. Does not fetch current HTML/assets again. |
 | `--update-from PATH` | Not set | Produce a new snapshot from a verified parent, refreshing current discovery/pages/assets. If the parent has history, refresh/reconcile its history as well. Cannot combine with `--from-snapshot` or `--retry-failed-only`. |
@@ -218,11 +241,11 @@ placeholders, not literal characters.
 
 | Operation | Required | Optional/relevant | Not permitted |
 | --- | --- | --- | --- |
-| Fresh current snapshot | Source/language are optional | `--source-replay-dir`, destinations | Parent selection flags |
-| Fresh with history | `--include-history` | `--source-replay-dir`, destinations | Parent selection flags |
+| Fresh current snapshot | Source/language are optional | `--allpages` for Rules Wiki, `--source-replay-dir`, destinations | Parent selection flags |
+| Fresh with history | `--include-history` | `--allpages` for Rules Wiki, `--source-replay-dir`, destinations | Parent selection flags |
 | History upgrade | `--from-snapshot` + `--include-history` | `--from-manifest`, `--from-inventory`, `--resume-work` | `--update-from`, `--source-replay-dir`, `--retry-failed-only` |
 | Current-content update | `--update-from` | Parent sidecars, `--source-replay-dir`, `--resume-work`; history-related flags under their constraints | `--from-snapshot`, `--retry-failed-only` |
-| Ordinary resume | Same initial mode/site/language + `--resume-work` | `--include-history` if selected initially | Changing the completed source scope |
+| Ordinary resume | Same initial mode/site/language + `--resume-work` | `--allpages` and `--include-history` if selected initially | Changing the completed source scope |
 | Retry only failed crawl URLs | `--resume-work` + `--retry-failed-only` | Same source selection as the original ordinary crawl | Archive-derived modes; incomplete discovery |
 
 The two parent-derived modes require a fully verified parent **ZIP + v3
@@ -284,6 +307,11 @@ private work directory available. Once the cause of failure is fixed, use
 the **same** mode, source and options with `--resume-work`.
 
 ### Ordinary interrupted crawl
+
+For a fresh run started with `--allpages`, repeat **that same flag**
+when resuming. A private `.wiki-fresh-discovery.json` receipt rejects
+accidental scope changes. The existing link-only work directory remains
+compatible with ordinary link-only resume.
 
 ```powershell
 infinity-wiki-snapshot `
@@ -483,6 +511,38 @@ blocked pending verified site-specific render/source-time guarantees. See
 [rendered freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md).
 
 ## 9. Additional commands and audit tools
+
+### Rules Wiki allpages coverage audit
+
+Use the read-only API comparator to check an **existing, verified**
+link-only snapshot against current main-namespace enumeration.
+The `--live` flag is mandatory and explicitly authorizes API requests;
+the tool does not fetch current HTML or change the ZIP:
+
+```powershell
+python -m tools.audit_rules_allpages `
+  "local/data/wiki/WIKI-en 20261115-223808.zip" `
+  "local/data/manifests/snapshots/WIKI-en 20261115-223808.json" `
+  "local/data/manifests/snapshots/inventories/WIKI-en 20261115-223808.inventory.json" `
+  --live
+```
+
+Add `--json` to print the complete comparison (all missing URLs and ID
+conflicts). The tool compares exact page URLs, not merely normalized titles.
+A missing page may have been created after the snapshot; a later API
+enumeration does not prove atomic historical coverage. An unlisted archived
+page might be a root alias or another namespace.
+
+For a bounded, API-only check of the two deployed language endpoints,
+run `python -m tools.probe_rules_allpages`; use `--language en` or
+`--language es` to limit the probe to one installation. These scripts
+are provided from a repository checkout, not as installed entry points.
+
+To acquire the API-discovered pages in a **new immutable child snapshot**
+based on a verified parent, use `--update-from` with the parent triple.
+This refreshes all current page bodies and performs full enumeration; it
+does not simply merge a list of missing titles into the old ZIP. The
+parent archive stays untouched.
 
 ### Legacy inventory indexing
 
