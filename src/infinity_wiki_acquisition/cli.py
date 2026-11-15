@@ -28,11 +28,28 @@ from html.parser import HTMLParser
 from pathlib import Path, PurePath
 from typing import NamedTuple, TextIO
 
+from infinity_wiki_acquisition.crawl_checkpoint import (
+    CHECKPOINT_FILENAME,
+    CHECKPOINT_FORMAT,
+    CHECKPOINT_VERSION,
+    read_crawl_checkpoint,
+    write_crawl_checkpoint,
+)
+from infinity_wiki_acquisition.history_checkpoint import (
+    HISTORY_CHECKPOINT_FILENAME,
+    download_history_checkpointed,
+)
+from infinity_wiki_acquisition.page_evidence import (
+    EVIDENCE_FORMAT,
+    EVIDENCE_VERSION,
+    write_page_evidence,
+)
 from infinity_wiki_acquisition.path_sanitization import (
     sanitize_path_component as _sanitize_path_component,
 )
 from infinity_wiki_acquisition.path_sanitization import sanitize_relative_path
 from infinity_wiki_acquisition.snapshot_archive import create_timestamped_archive
+from infinity_wiki_acquisition.snapshot_inventory import write_snapshot_inventory
 from infinity_wiki_acquisition.snapshot_provenance import write_snapshot_manifest
 
 sanitize_path_component = _sanitize_path_component
@@ -159,6 +176,37 @@ class WikiLink(NamedTuple):
 
     value: str
     asset: bool
+
+
+class WikiFetchedBytes(bytes):
+    """HTTP payload with observed redirect metadata, still usable as bytes."""
+
+    def __new__(
+        cls, data: bytes, *, effective_url: str, http_status: int | None,
+    ) -> "WikiFetchedBytes":
+        instance = bytes.__new__(cls, data)
+        instance.effective_url = effective_url
+        instance.http_status = http_status
+        return instance
+
+
+class WikiReference(NamedTuple):
+    """Source HTML reference type, separate from crawler page/asset decision."""
+
+    value: str
+    asset: bool
+    relation: str
+
+
+class WikiEnumeratedTitle(str):
+    """Allpages title with its independent MediaWiki page ID, when supplied."""
+
+    __slots__ = ("page_id",)
+
+    def __new__(cls, title: str, page_id: int | None = None) -> "WikiEnumeratedTitle":
+        instance = str.__new__(cls, title)
+        instance.page_id = page_id
+        return instance
 
 
 class WikiDownloadFailure(NamedTuple):
@@ -322,10 +370,17 @@ class LinkExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.links: list[WikiLink] = []
+        self.references: list[WikiReference] = []
+        self.redirect_hints: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
         rel = (attributes.get("rel") or "").casefold().split()
+        if tag == "meta" and (attributes.get("http-equiv") or "").casefold() == "refresh":
+            content = attributes.get("content") or ""
+            hinted = re.search(r"""\burl\s*=\s*['"]?([^;'"\s]+)""", content, re.I)
+            if hinted:
+                self.redirect_hints.append(unescape_html(hinted.group(1)))
         # A canonical/license link is a page reference, not a binary download.
         # Stylesheets and preload hints can point to extensionless assets.
         linked_resource = tag.lower() == "link" and (
@@ -338,15 +393,147 @@ class LinkExtractor(HTMLParser):
         )
         for name, value in attrs:
             if name == "srcset" and value:
-                self.links.extend(
-                    WikiLink(value=candidate, asset=True)
-                    for candidate, _ in srcset_candidates(value)
-                )
+                for candidate, _ in srcset_candidates(value):
+                    self.links.append(WikiLink(value=candidate, asset=True))
+                    self.references.append(
+                        WikiReference(value=candidate, asset=True, relation="responsive-image")
+                    )
                 continue
             if name not in {"href", "src"} or not value:
                 continue
-            asset = name == "src" or linked_resource or is_asset_url(value)
+            asset = (
+                name == "src" or linked_resource or is_asset_url(value)
+            ) and not is_mediawiki_namespace_page_url(value)
             self.links.append(WikiLink(value=value, asset=asset))
+            if tag == "link" and "canonical" in rel:
+                relation = "declared-canonical"
+            elif tag == "link" and "stylesheet" in rel:
+                relation = "stylesheet"
+            elif tag == "link" and "preload" in rel:
+                relation = "preload"
+            elif tag == "script" and name == "src":
+                relation = "script"
+            elif tag == "img" and name == "src":
+                relation = "embedded-image"
+            elif name == "src":
+                relation = "embedded-resource"
+            else:
+                relation = "navigation"
+            self.references.append(
+                WikiReference(value=value, asset=asset, relation=relation)
+            )
+
+
+def _reference_target_type(url: str, *, asset: bool) -> str:
+    """Classify a source reference without asserting transclusion."""
+    path = urllib.parse.unquote(urllib.parse.urlsplit(url).path).casefold()
+    for part in path.split("/"):
+        prefix, separator, _tail = part.partition(":")
+        if not separator:
+            continue
+        namespace = prefix.replace("_", " ")
+        if namespace in {"template", "module", "mediawiki", "category"}:
+            return f"{namespace}-page"
+        if namespace in {"file", "image"}:
+            return "file-description-page"
+    return "asset" if asset else "page"
+
+
+def build_page_evidence(
+    *,
+    url: str,
+    path: str,
+    payload: bytes,
+    parser: LinkExtractor,
+    site: WikiSite,
+) -> dict[str, object]:
+    """Capture original-HTML claims before link rewriting.
+
+    A hyperlink to a template/module is not proof of transclusion. Canonical
+    and meta-refresh hints are not confirmed HTTP redirects or aliases.
+    """
+    references: list[dict[str, str]] = []
+    canonical_hints: set[str] = set()
+    redirect_hints: set[str] = set()
+    seen: set[tuple[str, str, str, str]] = set()
+
+    def add(value: str, *, asset: bool, relation: str, evidence: str) -> None:
+        if value.lower().startswith(("javascript:", "mailto:", "data:")):
+            return
+        absolute = urllib.parse.urljoin(url, unescape_html(value))
+        parsed = urllib.parse.urlsplit(absolute)
+        if parsed.scheme not in {"http", "https"}:
+            return
+        # Keep the exact observed query-bearing URL distinct from the
+        # crawler's fetch identity (which strips page query variants).
+        observed_url = urllib.parse.urldefrag(absolute).url
+        target = canonical_crawl_url(absolute, asset=asset, site=site)
+        target_type = _reference_target_type(target, asset=asset)
+        if relation == "navigation" and target_type == "page":
+            return  # Ordinary navigation is not an acquisition dependency.
+        key = (target, relation, evidence, observed_url)
+        if key in seen:
+            return
+        seen.add(key)
+        references.append({
+            "targetUrl": target,
+            "observedUrl": observed_url,
+            "relation": relation,
+            "targetType": target_type,
+            "evidence": evidence,
+        })
+        if relation == "declared-canonical":
+            canonical_hints.add(observed_url)
+        elif relation == "meta-refresh":
+            redirect_hints.add(observed_url)
+
+    for ref in parser.references:
+        add(
+            ref.value, asset=ref.asset, relation=ref.relation,
+            evidence="source-html",
+        )
+        if ref.asset and site.key == HUMAN_SPHERE_SITE.key:
+            original_url = mediawiki_original_image_url(
+                urllib.parse.urljoin(url, ref.value)
+            )
+            if original_url is not None:
+                add(
+                    original_url,
+                    asset=True,
+                    relation="original-upload-candidate",
+                    evidence="crawler-derived",
+                )
+    for hint in parser.redirect_hints:
+        add(hint, asset=False, relation="meta-refresh", evidence="source-html")
+
+    markup = payload.decode("utf-8", errors="replace")
+    match = re.search(r"""["']wgArticleId["']\s*:\s*(\d+)""", markup)
+    markup_id = int(match.group(1)) if match else None
+    if markup_id is not None and markup_id <= 0:
+        markup_id = None
+    return {
+        "format": EVIDENCE_FORMAT,
+        "version": EVIDENCE_VERSION,
+        "url": url,
+        "path": path,
+        "originalSha256": hashlib.sha256(payload).hexdigest(),
+        "htmlPageIdHint": markup_id,
+        "httpEffectiveUrl": getattr(payload, "effective_url", None),
+        "httpStatus": getattr(payload, "http_status", None),
+        "httpRedirectTarget": (
+            getattr(payload, "effective_url", None)
+            if getattr(payload, "effective_url", None) not in (None, url)
+            else None
+        ),
+        "canonicalHints": sorted(canonical_hints),
+        "redirectHints": sorted(redirect_hints),
+        "references": sorted(
+            references,
+            key=lambda item: (
+                item["targetUrl"], item["relation"], item["evidence"]
+            ),
+        ),
+    }
 
 
 def _require_site_language(site: WikiSite, language: str) -> None:
@@ -500,6 +687,69 @@ def page_url_from_title(
     )
 
 
+def fetch_page_revision_batch(
+    page: WikiPage,
+    *,
+    language: str,
+    continuation: str | None = None,
+    site: WikiSite = DEFAULT_SITE,
+) -> tuple[str, tuple[WikiRevision, ...], str | None]:
+    """Read one MediaWiki revision page and its exact next continuation token."""
+    url = revision_query_url(
+        page.title, language=language, continuation=continuation, site=site,
+    )
+    payload = fetch_site_bytes(url, language=language, site=site)
+    try:
+        document = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid MediaWiki revision response for {page.url}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"Invalid MediaWiki revision response for {page.url}")
+    query = document.get("query")
+    page_records = query.get("pages") if isinstance(query, dict) else None
+    if not isinstance(page_records, list) or len(page_records) != 1:
+        raise ValueError(f"MediaWiki revision response did not identify {page.url}")
+    page_record = page_records[0]
+    if not isinstance(page_record, dict) or "missing" in page_record:
+        raise ValueError(f"MediaWiki page not found while reading history: {page.url}")
+    title = page_record.get("title")
+    if not isinstance(title, str) or not title:
+        raise ValueError(f"MediaWiki revision response has no title for {page.url}")
+
+    revisions: list[WikiRevision] = []
+    batch = page_record.get("revisions", [])
+    if not isinstance(batch, list):
+        raise ValueError(f"MediaWiki revision list is invalid for {page.url}")
+    for record in batch:
+        if not isinstance(record, dict):
+            raise ValueError(f"MediaWiki revision entry is invalid for {page.url}")
+        oldid = record.get("revid")
+        parentid = record.get("parentid")
+        timestamp = record.get("timestamp")
+        if (
+            type(oldid) is not int
+            or type(parentid) is not int
+            or not isinstance(timestamp, str)
+            or not timestamp
+        ):
+            raise ValueError(f"MediaWiki revision entry is incomplete for {page.url}")
+        revisions.append(
+            WikiRevision(oldid=oldid, parentid=parentid, timestamp=timestamp)
+        )
+
+    continuation_record = document.get("continue")
+    if not isinstance(continuation_record, dict):
+        return title, tuple(revisions), None
+    next_continuation = continuation_record.get("rvcontinue")
+    if (
+        not isinstance(next_continuation, str)
+        or not next_continuation
+        or next_continuation == continuation
+    ):
+        raise ValueError(f"MediaWiki revision continuation is invalid for {page.url}")
+    return title, tuple(revisions), next_continuation
+
+
 def fetch_page_revisions(
     page: WikiPage,
     *,
@@ -507,71 +757,63 @@ def fetch_page_revisions(
     site: WikiSite = DEFAULT_SITE,
 ) -> tuple[str, tuple[WikiRevision, ...]]:
     """Return every public revision advertised for one mirrored page."""
-    _require_site_language(site, language)
     continuation: str | None = None
     revisions: list[WikiRevision] = []
     canonical_title: str | None = None
-
     while True:
-        url = revision_query_url(
-            page.title,
-            language=language,
-            continuation=continuation,
-            site=site,
+        title, batch, continuation_next = fetch_page_revision_batch(
+            page, language=language, continuation=continuation, site=site,
         )
-        payload = fetch_site_bytes(url, language=language, site=site)
-        try:
-            document = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid MediaWiki revision response for {page.url}: {exc}") from exc
-        if not isinstance(document, dict):
-            raise ValueError(f"Invalid MediaWiki revision response for {page.url}")
-        query = document.get("query")
-        page_records = query.get("pages") if isinstance(query, dict) else None
-        if not isinstance(page_records, list) or len(page_records) != 1:
-            raise ValueError(f"MediaWiki revision response did not identify {page.url}")
-        page_record = page_records[0]
-        if not isinstance(page_record, dict) or "missing" in page_record:
-            raise ValueError(f"MediaWiki page not found while reading history: {page.url}")
-        title = page_record.get("title")
-        if not isinstance(title, str) or not title:
-            raise ValueError(f"MediaWiki revision response has no title for {page.url}")
-        if canonical_title is None:
-            canonical_title = title
-        elif canonical_title != title:
+        if canonical_title is not None and canonical_title != title:
             raise ValueError(f"MediaWiki revision title changed while reading {page.url}")
-
-        batch = page_record.get("revisions", [])
-        if not isinstance(batch, list):
-            raise ValueError(f"MediaWiki revision list is invalid for {page.url}")
-        for record in batch:
-            if not isinstance(record, dict):
-                raise ValueError(f"MediaWiki revision entry is invalid for {page.url}")
-            oldid = record.get("revid")
-            parentid = record.get("parentid")
-            timestamp = record.get("timestamp")
-            if (
-                type(oldid) is not int
-                or type(parentid) is not int
-                or not isinstance(timestamp, str)
-                or not timestamp
-            ):
-                raise ValueError(f"MediaWiki revision entry is incomplete for {page.url}")
-            revisions.append(
-                WikiRevision(oldid=oldid, parentid=parentid, timestamp=timestamp)
-            )
-
-        continuation_record = document.get("continue")
-        if not isinstance(continuation_record, dict):
+        canonical_title = title
+        revisions.extend(batch)
+        continuation = continuation_next
+        if continuation is None:
             break
-        next_continuation = continuation_record.get("rvcontinue")
-        if not isinstance(next_continuation, str) or not next_continuation:
-            raise ValueError(f"MediaWiki revision continuation is invalid for {page.url}")
-        continuation = next_continuation
-
     if canonical_title is None or not revisions:
         raise ValueError(f"MediaWiki returned no revisions for {page.url}")
     return canonical_title, tuple(revisions)
+
+def fetch_all_page_title_batch(
+    *,
+    language: str,
+    continuation: str | None = None,
+    site: WikiSite = DEFAULT_SITE,
+) -> tuple[tuple[str, ...], str | None]:
+    """Fetch one allpages batch and its next continuation token."""
+    _require_site_language(site, language)
+    url = allpages_query_url(language=language, continuation=continuation, site=site)
+    payload = fetch_site_bytes(url, language=language, site=site)
+    try:
+        document = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid MediaWiki allpages response for {site.label}: {exc}") from exc
+    if not isinstance(document, dict):
+        raise ValueError(f"Invalid MediaWiki allpages response for {site.label}")
+    query = document.get("query")
+    page_records = query.get("allpages") if isinstance(query, dict) else None
+    if not isinstance(page_records, list):
+        raise ValueError(f"MediaWiki allpages response is invalid for {site.label}")
+    titles: list[str] = []
+    for record in page_records:
+        if not isinstance(record, dict):
+            raise ValueError(f"MediaWiki allpages entry is invalid for {site.label}")
+        title = record.get("title")
+        if not isinstance(title, str) or not title:
+            raise ValueError(f"MediaWiki allpages entry has no title for {site.label}")
+        page_id = record.get("pageid")
+        if page_id is not None and (type(page_id) is not int or page_id <= 0):
+            raise ValueError(f"Invalid MediaWiki page ID for {title!r}")
+        titles.append(WikiEnumeratedTitle(title, page_id))
+
+    continuation_record = document.get("continue")
+    if not isinstance(continuation_record, dict):
+        return tuple(titles), None
+    next_token = continuation_record.get("apcontinue")
+    if not isinstance(next_token, str) or not next_token or next_token == continuation:
+        raise ValueError(f"MediaWiki allpages continuation is invalid for {site.label}")
+    return tuple(titles), next_token
 
 
 def fetch_all_page_titles(
@@ -580,47 +822,16 @@ def fetch_all_page_titles(
     site: WikiSite = DEFAULT_SITE,
 ) -> tuple[str, ...]:
     """Return all main-namespace MediaWiki page titles for a configured site."""
-    _require_site_language(site, language)
     continuation: str | None = None
     titles: list[str] = []
-
     while True:
-        url = allpages_query_url(
-            language=language,
-            continuation=continuation,
-            site=site,
+        batch, continuation = fetch_all_page_title_batch(
+            language=language, continuation=continuation, site=site,
         )
-        payload = fetch_site_bytes(url, language=language, site=site)
-        try:
-            document = json.loads(payload)
-        except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Invalid MediaWiki allpages response for {site.label}: {exc}"
-            ) from exc
-        if not isinstance(document, dict):
-            raise ValueError(f"Invalid MediaWiki allpages response for {site.label}")
-        query = document.get("query")
-        page_records = query.get("allpages") if isinstance(query, dict) else None
-        if not isinstance(page_records, list):
-            raise ValueError(f"MediaWiki allpages response is invalid for {site.label}")
-        for record in page_records:
-            if not isinstance(record, dict):
-                raise ValueError(f"MediaWiki allpages entry is invalid for {site.label}")
-            title = record.get("title")
-            if not isinstance(title, str) or not title:
-                raise ValueError(f"MediaWiki allpages entry has no title for {site.label}")
-            titles.append(title)
-
-        continuation_record = document.get("continue")
-        if not isinstance(continuation_record, dict):
+        titles.extend(batch)
+        if continuation is None:
             break
-        next_continuation = continuation_record.get("apcontinue")
-        if not isinstance(next_continuation, str) or not next_continuation:
-            raise ValueError(f"MediaWiki allpages continuation is invalid for {site.label}")
-        continuation = next_continuation
-
     return tuple(titles)
-
 
 def _history_index_payload(
     *,
@@ -653,11 +864,17 @@ def download_wiki_history(
     language: str = "en",
     site: WikiSite = DEFAULT_SITE,
     progress: Callable[[WikiHistoryProgress], None] | None = None,
+    checkpoint_file: Path | None = None,
 ) -> WikiHistoryResult:
-    """Download all rendered oldid revisions for the mirrored current pages."""
+    """Download rendered oldid revisions, checkpointing when requested."""
     _require_site_language(site, language)
     if not pages:
         raise ValueError("Historical wiki acquisition requires at least one mirrored page")
+    if checkpoint_file is not None:
+        return download_history_checkpointed(
+            pages, destination, language=language, site=site,
+            progress=progress, checkpoint_file=checkpoint_file,
+        )
 
     files: set[Path] = set()
     failures: list[WikiDownloadFailure] = []
@@ -844,25 +1061,44 @@ def mediawiki_original_image_url(url: str) -> str | None:
     )
 
 
+def is_mediawiki_namespace_page_url(url: str) -> bool:
+    """Whether an apparent asset is a MediaWiki HTML namespace page.
+
+    A wiki title such as Module:Infobox/styles.css is served as an HTML
+    description/source page, despite its stylesheet-looking extension.
+    Uploaded binary files still live under /images/.
+    """
+    path = urllib.parse.unquote(urllib.parse.urlsplit(url).path).casefold()
+    if path.startswith("/images/"):
+        return False
+    page_namespaces = {
+        "file", "image", "module", "mediawiki", "template",
+        "category", "user", "help", "portal",
+    }
+    for segment in path.split("/"):
+        namespace, separator, _title = segment.partition(":")
+        if not separator:
+            continue
+        normalized = namespace.replace("_", " ")
+        # MediaWiki has a corresponding *_talk namespace for most content
+        # namespaces. These are HTML pages even if the title ends in .css.
+        if normalized.endswith(" talk"):
+            normalized = normalized[:-5]
+        if normalized in page_namespaces:
+            return True
+    return False
+
+
 def is_asset_url(url: str) -> bool:
     """Return whether a URL path is recognizably an asset resource."""
     path = urllib.parse.urlsplit(url).path
     decoded_path = urllib.parse.unquote(path).casefold()
     if decoded_path.startswith("/images/"):
         return True
-    # MediaWiki File:/Image: URLs are HTML description pages, regardless of
-    # their image extensions. The actual uploaded files live under /images/.
-    if any(
-        segment.startswith(("file:", "image:"))
-        for segment in decoded_path.split("/")
-    ):
+    if is_mediawiki_namespace_page_url(url):
         return False
     suffix = Path(path).suffix.casefold()
-    return (
-        decoded_path.startswith("/images/")
-        or suffix in ASSET_EXTENSIONS
-        or Path(path).name.casefold() == "load.php"
-    )
+    return suffix in ASSET_EXTENSIONS or Path(path).name.casefold() == "load.php"
 
 
 def wiki_page_matches_language(
@@ -1042,7 +1278,10 @@ def rewrite_html_links(
                     )
             rewritten = ",".join(chunks)
         else:
-            rewritten = rewrite_value(value, asset=attr == "src" or is_asset_url(value))
+            asset = (attr == "src" or is_asset_url(value)) and not (
+                is_mediawiki_namespace_page_url(value)
+            )
+            rewritten = rewrite_value(value, asset=asset)
         return f"{match.group('attr')}{escape_html(rewritten, quote=True)}{match.group('quote')}"
 
     return pattern.sub(replace, html_text)
@@ -1071,7 +1310,14 @@ def fetch_bytes(url: str, *, language: str = "en") -> bytes:
     for attempt in range(FETCH_ATTEMPTS):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
+                getter = getattr(response, "geturl", None)
+                effective = getter() if callable(getter) else url
+                status = getattr(response, "status", None)
+                return WikiFetchedBytes(
+                    response.read(),
+                    effective_url=effective if isinstance(effective, str) else url,
+                    http_status=status if type(status) is int else None,
+                )
         except Exception as exc:
             if not _retryable_fetch_error(exc) or attempt >= FETCH_ATTEMPTS - 1:
                 raise
@@ -1169,6 +1415,54 @@ def validate_asset_bytes(url: str, payload: bytes) -> None:
         raise ValueError(f"Invalid {suffix} file signature")
 
 
+def _rewrite_reclassified_page_references(
+    *,
+    destination: Path,
+    url: str,
+    old_asset: bool,
+    new_asset: bool,
+    site: WikiSite,
+    pages: dict[str, WikiPage],
+    saved_records: dict[str, list[str | int]],
+) -> None:
+    """Repair saved HTML links when a failed URL changes page/asset classification.
+
+    A completed crawl checkpoint contains rewritten local HTML, not source
+    HTML. When a previous failed URL is reclassified after a code fix, update
+    the old local reference in saved HTML without re-fetching those pages.
+    """
+    old_relative = local_relative_path(url, asset=old_asset, site=site)
+    new_relative = local_relative_path(url, asset=new_asset, site=site)
+    if old_relative == new_relative:
+        return
+
+    pattern = re.compile(
+        r"""(?P<prefix>(?<![\w-])(?:href|src|srcset)\s*=\s*["'])(?P<value>[^"']+)(?P<quote>["'])""",
+        re.I,
+    )
+    for page in pages.values():
+        target = destination / page.path
+        if not target.is_file():
+            raise ValueError(f"Saved HTML missing during link reconciliation: {page.path}")
+        base = posixpath.dirname(page.path) or "."
+        old_link = escape_html(posixpath.relpath(old_relative, base), quote=True)
+        new_link = escape_html(posixpath.relpath(new_relative, base), quote=True)
+        old_token = re.compile(
+            r"(?<![^\s,])" + re.escape(old_link) + r"(?=$|[#,\s])"
+        )
+
+        def change(match: re.Match[str]) -> str:
+            value = old_token.sub(lambda _: new_link, match.group("value"))
+            return match.group("prefix") + value + match.group("quote")
+
+        text = target.read_text(encoding="utf-8")
+        updated = pattern.sub(change, text)
+        if updated != text:
+            payload = updated.encode("utf-8")
+            write_bytes(target, payload)
+            saved_records[page.url] = [page.path, len(payload)]
+
+
 def download_wiki(
     base_url: str,
     destination: Path,
@@ -1176,44 +1470,176 @@ def download_wiki(
     language: str = "en",
     site: WikiSite = DEFAULT_SITE,
     progress: Callable[[WikiCrawlProgress], None] | None = None,
+    checkpoint_file: Path | None = None,
+    retry_failed_only: bool = False,
 ) -> WikiDownloadResult:
-    """Crawl one language-scoped mirror candidate without publishing partial data."""
+    """Crawl the source or retry recorded failures from a completed discovery."""
     _require_site_language(site, language)
     if not wiki_page_matches_language(base_url, language, site=site):
         raise ValueError(f"Wiki root {base_url!r} does not match language {language!r}")
 
     canonical_base_url = canonical_crawl_url(base_url, site=site)
-    initial_urls = [canonical_base_url]
-    if site.enumerate_pages:
-        try:
-            titles = fetch_all_page_titles(language=language, site=site)
-        except Exception as exc:  # pragma: no cover - live network failure path.
-            return WikiDownloadResult(
-                files=(),
-                failures=(
-                    WikiDownloadFailure(
-                        url=allpages_query_url(language=language, site=site),
-                        error=f"{type(exc).__name__}: {exc}",
+    if retry_failed_only and checkpoint_file is None:
+        raise ValueError("--retry-failed-only requires a crawl checkpoint")
+
+    existing_checkpoint = checkpoint_file is not None and checkpoint_file.is_file()
+    if existing_checkpoint or retry_failed_only:
+        state = read_crawl_checkpoint(
+            checkpoint_file,
+            work=destination,
+            site=site.key,
+            language=language,
+            root_url=canonical_base_url,
+            require_complete=retry_failed_only,
+        )
+        phase = state.get("phase", "complete")
+        enumeration_continuation: str | None = state.get("enumerationContinuation")
+        discovered_assets = dict(state["discovered"])
+        page_ids: dict[str, int] = dict(state.get("pageIds", {}))
+        required_urls = set(state["required"])
+        saved_records: dict[str, list[str | int]] = dict(state["saved"])
+        saved: set[Path] = {
+            destination / record[0] for record in saved_records.values()
+        }
+        pages: dict[str, WikiPage] = {
+            entry["url"]: WikiPage(entry["url"], entry["path"], entry["title"])
+            for entry in state["pages"]
+        }
+        ignored: dict[str, WikiIgnoredURL] = {
+            url: WikiIgnoredURL(url, reason) for url, reason in state["ignored"].items()
+        }
+        target_urls: dict[str, str] = {
+            record[0].casefold(): url for url, record in saved_records.items()
+        }
+        if len(target_urls) != len(saved):
+            raise ValueError("Crawl checkpoint contains colliding saved paths")
+        queue: deque[tuple[str, bool]] = deque(
+            (url, asset) for url, asset in state.get("queue", [])
+        )
+        # Continue the pending queue first, then retry failures observed
+        # before an interruption. Completed checkpoints have an empty queue.
+        pending = {url for url, _asset in queue}
+        queue.extend(
+            (url, discovered_assets[url])
+            for url in state["failed"]
+            if url not in pending
+        )
+    else:
+        phase = "enumerating" if checkpoint_file and site.enumerate_pages else "crawling"
+        enumeration_continuation = None
+        initial_urls = [canonical_base_url]
+        if site.enumerate_pages and checkpoint_file is None:
+            try:
+                titles = fetch_all_page_titles(language=language, site=site)
+            except Exception as exc:  # pragma: no cover - live network failure path.
+                return WikiDownloadResult(
+                    files=(),
+                    failures=(
+                        WikiDownloadFailure(
+                            url=allpages_query_url(language=language, site=site),
+                            error=f"{type(exc).__name__}: {exc}",
+                        ),
                     ),
-                ),
+                )
+            initial_urls.extend(
+                canonical_crawl_url(
+                    page_url_from_title(title, language=language, site=site),
+                    site=site,
+                )
+                for title in titles
             )
-        initial_urls.extend(
-            canonical_crawl_url(
-                page_url_from_title(title, language=language, site=site),
-                site=site,
-            )
-            for title in titles
+        required_urls = set(initial_urls)
+        discovered_assets = dict.fromkeys(initial_urls, False)
+        page_ids = {}
+        queue = deque((url, False) for url in discovered_assets)
+        saved_records = {}
+        saved = set()
+        pages = {}
+        ignored = {}
+        target_urls = {}
+
+    discovered = set(discovered_assets)
+    failures: list[WikiDownloadFailure] = []
+    attempted = 0
+
+    def save_checkpoint() -> None:
+        if checkpoint_file is None:
+            return
+        write_crawl_checkpoint(
+            checkpoint_file,
+            {
+                "format": CHECKPOINT_FORMAT,
+                "version": CHECKPOINT_VERSION,
+                "phase": phase,
+                "complete": phase == "complete",
+                "site": site.key,
+                "language": language,
+                "rootUrl": canonical_base_url,
+                "enumerationContinuation": enumeration_continuation,
+                "queue": [[url, asset] for url, asset in queue],
+                "discovered": discovered_assets,
+                "pageIds": page_ids,
+                "required": sorted(required_urls),
+                "saved": saved_records,
+                "pages": [
+                    {"url": page.url, "path": page.path, "title": page.title}
+                    for page in sorted(pages.values(), key=lambda page: page.path)
+                ],
+                "ignored": {url: record.reason for url, record in ignored.items()},
+                "failed": {failure.url: failure.error for failure in failures},
+            },
         )
 
-    required_urls = set(initial_urls)
-    discovered = set(initial_urls)
-    queue: deque[tuple[str, bool]] = deque((url, False) for url in dict.fromkeys(initial_urls))
-    saved: set[Path] = set()
-    pages: dict[str, WikiPage] = {}
-    failures: list[WikiDownloadFailure] = []
-    ignored: dict[str, WikiIgnoredURL] = {}
-    target_urls: dict[str, str] = {}
-    attempted = 0
+    if phase == "enumerating":
+        # Persist after each MediaWiki API batch. A stopped enumeration
+        # restarts from its last committed apcontinue token.
+        save_checkpoint()
+        while True:
+            try:
+                titles, next_continuation = fetch_all_page_title_batch(
+                    language=language,
+                    continuation=enumeration_continuation,
+                    site=site,
+                )
+            except Exception as exc:
+                return WikiDownloadResult(
+                    files=tuple(sorted(saved, key=lambda file: file.as_posix())),
+                    failures=(
+                        WikiDownloadFailure(
+                            url=allpages_query_url(
+                                language=language,
+                                continuation=enumeration_continuation,
+                                site=site,
+                            ),
+                            error=f"{type(exc).__name__}: {exc}",
+                        ),
+                    ),
+                )
+            for title in titles:
+                url = canonical_crawl_url(
+                    page_url_from_title(title, language=language, site=site),
+                    site=site,
+                )
+                required_urls.add(url)
+                page_id = getattr(title, "page_id", None)
+                if page_id is not None:
+                    old_id = page_ids.get(url)
+                    if old_id is not None and old_id != page_id:
+                        raise ValueError(f"Conflicting enumerated page ID for {url}")
+                    page_ids[url] = page_id
+                if url not in discovered:
+                    discovered.add(url)
+                    discovered_assets[url] = False
+                    queue.append((url, False))
+            enumeration_continuation = next_continuation
+            if enumeration_continuation is None:
+                phase = "crawling"
+            save_checkpoint()
+            if phase == "crawling":
+                break
+
+    if queue:
+        phase = "crawling"
 
     def record_failure(url: str, error: str) -> None:
         failures.append(WikiDownloadFailure(url=url, error=error))
@@ -1230,8 +1656,14 @@ def download_wiki(
                 )
             )
 
+    processed = 0
     while queue:
+        # Write only between completed URL attempts. If terminated mid-URL,
+        # replay from the last durable queue state (at most 100 attempts).
+        if checkpoint_file is not None and processed % 100 == 0:
+            save_checkpoint()
         url, asset = queue.popleft()
+        processed += 1
 
         ignore_reason = ignored_url_reason(url, site=site)
         if ignore_reason is not None:
@@ -1240,6 +1672,16 @@ def download_wiki(
         if should_skip_url(url, site=site):
             continue
 
+        # Re-evaluate formerly failed assets after code fixes. A MediaWiki
+        # namespace page can turn out to be HTML despite a .css/.png suffix.
+        old_asset = asset
+        if existing_checkpoint:
+            # Account for improved URL classification in either direction,
+            # while retaining asset hints from stylesheet/source tags.
+            asset = (asset or is_asset_url(url)) and not (
+                is_mediawiki_namespace_page_url(url)
+            )
+        discovered_assets[url] = asset
         relative = local_relative_path(url, asset=asset, site=site)
         target = destination / relative
         portable_key = relative.casefold()
@@ -1258,6 +1700,7 @@ def download_wiki(
                 pass  # A previous interrupted crawl may contain an HTML challenge.
             else:
                 saved.add(target)
+                saved_records[url] = [relative, target.stat().st_size]
                 continue
 
         attempted += 1
@@ -1297,7 +1740,21 @@ def download_wiki(
         _migrate_blocking_legacy_page_paths(target, destination, site=site)
         write_bytes(target, payload)
         saved.add(target)
+        saved_records[url] = [relative, target.stat().st_size]
 
+        if existing_checkpoint and asset and old_asset != asset:
+            _rewrite_reclassified_page_references(
+                destination=destination,
+                url=url,
+                old_asset=old_asset,
+                new_asset=asset,
+                site=site,
+                pages=pages,
+                saved_records=saved_records,
+            )
+            # Rewriting previously saved HTML changes recorded file sizes.
+            # Commit the entire consistent state before another interruption.
+            save_checkpoint()
         if asset:
             continue
 
@@ -1320,9 +1777,30 @@ def download_wiki(
         )
         rewritten_text = rewrite_html_links(text, url, language=language, site=site)
         write_bytes(target, rewritten_text.encode("utf-8"))
+        saved_records[url] = [relative, target.stat().st_size]
+
+        if existing_checkpoint and old_asset != asset:
+            _rewrite_reclassified_page_references(
+                destination=destination,
+                url=url,
+                old_asset=old_asset,
+                new_asset=asset,
+                site=site,
+                pages=pages,
+                saved_records=saved_records,
+            )
 
         parser = LinkExtractor()
         parser.feed(text)
+        if checkpoint_file is not None:
+            evidence = build_page_evidence(
+                url=url,
+                path=relative,
+                payload=payload,
+                parser=parser,
+                site=site,
+            )
+            write_page_evidence(destination, url, evidence)
         for link in parser.links:
             absolute = urllib.parse.urljoin(url, link.value)
             candidates = [(absolute, link.asset)]
@@ -1335,6 +1813,7 @@ def download_wiki(
                 if candidate in discovered:
                     continue
                 discovered.add(candidate)
+                discovered_assets[candidate] = asset_link
 
                 ignore_reason = ignored_url_reason(candidate, site=site)
                 if ignore_reason is not None:
@@ -1352,6 +1831,13 @@ def download_wiki(
                 ):
                     continue
                 queue.append((candidate, asset_link))
+
+        if existing_checkpoint and old_asset != asset:
+            save_checkpoint()
+
+    phase = "complete"
+    enumeration_continuation = None
+    save_checkpoint()
 
     return WikiDownloadResult(
         files=tuple(
@@ -1464,6 +1950,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--retry-failed-only",
+        action="store_true",
+        help=(
+            "With --resume-work, retry only failures from a completed crawl "
+            "checkpoint, preserving previously saved pages and discovered URLs"
+        ),
+    )
+    parser.add_argument(
         "--manifest-dir",
         type=Path,
         default=Path("local/data/manifests/snapshots"),
@@ -1480,11 +1974,15 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
+    if args.retry_failed_only and args.resume_work is None:
+        print("ERROR: --retry-failed-only requires --resume-work", file=sys.stderr)
+        return 1
     snapshot_root = (Path.cwd() / args.root).resolve()
     work_root = (Path.cwd() / args.work_root).resolve()
     snapshot_root.mkdir(parents=True, exist_ok=True)
     archive: Path | None = None
     manifest: Path | None = None
+    inventory: Path | None = None
     staging_path: Path | None = None
     history_result: WikiHistoryResult | None = None
     progress = ConsoleProgressReporter()
@@ -1513,6 +2011,8 @@ def main(argv: list[str] | None = None) -> int:
                 language=args.language,
                 site=site,
                 progress=progress,
+                checkpoint_file=staging_path / CHECKPOINT_FILENAME,
+                retry_failed_only=args.retry_failed_only,
             )
         finally:
             progress.finish()
@@ -1548,6 +2048,7 @@ def main(argv: list[str] | None = None) -> int:
                     language=args.language,
                     site=site,
                     progress=history_progress,
+                    checkpoint_file=staging_path / HISTORY_CHECKPOINT_FILENAME,
                 )
             finally:
                 history_progress.finish()
@@ -1584,7 +2085,32 @@ def main(argv: list[str] | None = None) -> int:
             language=args.language,
             require_new=True,
         )
+        inventory = write_snapshot_inventory(
+            archive,
+            manifest,
+            Path(args.manifest_dir) / "inventories",
+            work=staging_path,
+            site=site.key,
+            language=args.language,
+            root_url=root_url,
+            include_history=args.include_history,
+            pages=result.pages,
+            crawl_checkpoint=staging_path / CHECKPOINT_FILENAME,
+        )
+    except KeyboardInterrupt:
+        if inventory is not None:
+            inventory.unlink(missing_ok=True)
+        if manifest is not None:
+            manifest.unlink(missing_ok=True)
+        if archive is not None:
+            archive.unlink(missing_ok=True)
+        print("Wiki acquisition interrupted; latest acquisition checkpoints preserved.", file=sys.stderr)
+        if staging_path is not None and staging_path.exists():
+            print(f"Preserved wiki work -> {staging_path}", file=sys.stderr)
+        return 130
     except (OSError, ValueError) as exc:
+        if inventory is not None:
+            inventory.unlink(missing_ok=True)
         if manifest is not None:
             manifest.unlink(missing_ok=True)
         if archive is not None:
@@ -1610,6 +2136,7 @@ def main(argv: list[str] | None = None) -> int:
     if result.ignored:
         print(f"Ignored {len(result.ignored)} optional site URL(s).")
     print(f"Snapshot provenance -> {manifest}")
+    print(f"Snapshot inventory -> {inventory}")
     return 0
 
 

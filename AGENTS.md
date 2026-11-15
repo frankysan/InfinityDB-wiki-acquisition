@@ -1,9 +1,10 @@
 # Agent instructions — Wiki and Human Sphere acquisition
 
 These tracked instructions apply to coding and research agents in this repository.
-Read [development guidance](docs/DEVELOPMENT.md) and the relevant parts of
-[README](README.md) before substantial changes. Consult the owner's source,
-tests, workflow and domain documentation rather than importing InfinityDB
+Read [development guidance](docs/DEVELOPMENT.md), the
+[acquisition roadmap](docs/TODO.md) and relevant [README](README.md)
+sections before substantial changes. Consult the owner's source, tests,
+workflow and domain documentation rather than importing InfinityDB
 procedures wholesale.
 
 If a Git-ignored `AGENTS.local.md` exists, read it after this file. It is
@@ -70,8 +71,12 @@ as a pinned contract.
   specific deferred or blocked downstream verification. CI success, Linux
   worker success and application release acceptance are separate claims.
 
-For specialized source and handoff work, use the
+For specialized source and provenance handoff work, use the
 [repository-specific agent skill](.agents/skills/wiki-source-handoff/SKILL.md).
+For a copy-ready prompt to continue a task in a fresh ChatGPT.com chat,
+VS Code Codex session or VS Code GitHub Copilot session, use the
+[handoff skill](.agents/skills/handoff/SKILL.md) with `chat`, `codex` or
+`copilot` as the destination. Producing a handoff is read-only.
 
 These instructions do not activate InfinityDB's optional multi-agent
 coordination system. That protocol applies only when explicitly requested

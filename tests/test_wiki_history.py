@@ -311,6 +311,8 @@ def test_main_history_failure_preserves_work_without_publishing(
         language: str = "en",
         site=module.DEFAULT_SITE,
         progress=None,
+        checkpoint_file: Path | None = None,
+        retry_failed_only: bool = False,
     ) -> Any:
         assert root_url == module.ROOT_URL
         page = staging / "index.html"
@@ -328,6 +330,7 @@ def test_main_history_failure_preserves_work_without_publishing(
         language: str = "en",
         site=module.DEFAULT_SITE,
         progress=None,
+        checkpoint_file: Path | None = None,
     ) -> Any:
         assert len(pages) == 1
         assert staging.is_dir()

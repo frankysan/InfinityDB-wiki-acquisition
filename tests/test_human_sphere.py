@@ -304,7 +304,7 @@ def test_human_sphere_mediawiki_upload_tree_is_always_an_asset(
     assert 'href="images/archive/source.bin"' in mirrored
 
 
-def test_human_sphere_page_paths_do_not_collide_with_descendant_assets() -> None:
+def test_human_sphere_page_paths_do_not_collide_with_descendant_module_pages() -> None:
     site = module.HUMAN_SPHERE_SITE
 
     page = module.local_relative_path(
@@ -314,17 +314,16 @@ def test_human_sphere_page_paths_do_not_collide_with_descendant_assets() -> None
     )
     descendant = module.local_relative_path(
         "https://www.human-sphere.com/Module:Infobox/styles.css",
-        asset=True,
         site=site,
         os_name="Windows",
     )
 
     assert page == "Module_Infobox.html"
-    assert descendant == "Module_Infobox/styles.css"
+    assert descendant == "Module_Infobox/styles.css.html"
     assert page != descendant.split("/", 1)[0]
 
 
-def test_human_sphere_crawl_allows_page_and_descendant_asset(
+def test_human_sphere_crawl_allows_page_and_descendant_module_page(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -340,7 +339,7 @@ def test_human_sphere_crawl_allows_page_and_descendant_asset(
             b'<html><head><link rel="stylesheet" href="/Module:Infobox/styles.css">'
             b"</head><body>Module</body></html>"
         ),
-        module_asset: b".infobox {}",
+        module_asset: b"<html><body>Source page for CSS module</body></html>",
     }
     monkeypatch.setattr(
         module,
@@ -362,8 +361,120 @@ def test_human_sphere_crawl_allows_page_and_descendant_asset(
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
         "Main_Page.html",
         "Module_Infobox.html",
-        "Module_Infobox/styles.css",
+        "Module_Infobox/styles.css.html",
     ]
+
+
+def test_mediawiki_namespace_css_and_js_urls_are_html_pages() -> None:
+    site = module.HUMAN_SPHERE_SITE
+    base = "https://www.human-sphere.com"
+    for suffix in (
+        "/Module:Infobox/styles.css",
+        "/Module:Infobox/styles.js",
+        "/Module_talk:Infobox/styles.css",
+        "/Module_talk:Infobox/styles.js",
+        "/Module%5Ftalk%3AInfobox/styles.css",
+        "/Template_talk:Example/style.css",
+        "/Category_talk:Example.css",
+        "/File_talk:Unit_Profile.png",
+        "/MediaWiki_talk:Common.css",
+        "/User_talk:Example/custom.css",
+        "/Help_talk:Example/styles.css",
+        "/Portal_talk:Example/styles.css",
+        "/MediaWiki:Common.css",
+        "/File:Unit_Profile.png",
+        "/Template:Example/style.css",
+        "/Category:Example.css",
+    ):
+        assert not module.is_asset_url(base + suffix)
+        assert module.is_mediawiki_namespace_page_url(base + suffix)
+    for suffix in (
+        "/resources/styles.css",
+        "/skins/Timeless/code.js",
+        "/images/6/62/Unit_Profile.png",
+        "/load.php?modules=styles",
+    ):
+        assert module.is_asset_url(base + suffix)
+        assert not module.is_mediawiki_namespace_page_url(base + suffix)
+
+    page = base + "/Module:Infobox"
+    source = base + "/Module:Infobox/styles.css"
+    html = (
+        '<a href="/Module:Infobox/styles.css">Source</a>'
+        '<link rel="stylesheet" href="/Module:Infobox/styles.css">'
+        '<link rel="stylesheet" href="/resources/styles.css">'
+    )
+    parser = module.LinkExtractor()
+    parser.feed(html)
+    assert module.WikiLink("/Module:Infobox/styles.css", False) in parser.links
+    assert module.WikiLink("/resources/styles.css", True) in parser.links
+    assert all(
+        not link.asset for link in parser.links
+        if link.value == "/Module:Infobox/styles.css"
+    )
+    rewritten = module.rewrite_html_links(html, page, site=site)
+    assert 'href="Module_Infobox/styles.css.html"' in rewritten
+    assert 'href="resources/styles.css"' in rewritten
+    assert module.local_relative_path(source, site=site) == (
+        "Module_Infobox/styles.css.html"
+    )
+    # The conventional lowercase source filename stays readable, while
+    # distinct mixed/uppercase spellings cannot collide on Windows.
+    alternatives = [
+        module.local_relative_path(
+            base + "/Module:Infobox/" + source_name, site=site
+        )
+        for source_name in ("styles.css", "Styles.css", "styles.CSS")
+    ]
+    assert len({name.casefold() for name in alternatives}) == 3
+    assert alternatives[0] == "Module_Infobox/styles.css.html"
+
+
+def test_human_sphere_module_talk_css_page_is_not_an_asset(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    module_talk = "https://www.human-sphere.com/Module_talk:Infobox/styles.css"
+    asset = "https://www.human-sphere.com/resources/site.css"
+    root_html = (
+        b'<html><body><a href="/Module_talk:Infobox/styles.css">Talk source</a>'
+        b'<link rel="stylesheet" href="/Module_talk:Infobox/styles.css">'
+        b'<link rel="stylesheet" href="/resources/site.css">'
+        b'</body></html>'
+    )
+    payloads = {
+        root: root_html,
+        module_talk: b'<!DOCTYPE html><html><body>Module discussion</body></html>',
+        asset: b'body { color: inherit; }',
+    }
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: ("Main Page",),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    fetched: list[str] = []
+
+    def fake_fetch(url: str, *, language: str = "en") -> bytes:
+        fetched.append(url)
+        return payloads[url]
+
+    monkeypatch.setattr(module, "fetch_bytes", fake_fetch)
+    result = module.download_wiki(root, tmp_path, site=site)
+
+    relative = module.local_relative_path(module_talk, site=site)
+    assert re.fullmatch(
+        r"Module_talk_Infobox__u_[a-f0-9]{12}/styles\.css\.html",
+        relative,
+    )
+    assert result.failures == ()
+    assert fetched == [root, module_talk, asset]
+    assert (tmp_path / relative).read_bytes() == payloads[module_talk]
+    assert (tmp_path / "resources/site.css").read_bytes() == payloads[asset]
+    assert module_talk in {page.url for page in result.pages}
+    rewritten = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert rewritten.count(f'href="{relative}"') == 2
+    assert 'href="resources/site.css"' in rewritten
 
 
 def test_human_sphere_resume_reuses_existing_assets(
@@ -494,6 +605,8 @@ def test_main_human_sphere_snapshot_uses_distinct_provenance(
         language: str = "en",
         site: Any = module.DEFAULT_SITE,
         progress=None,
+        checkpoint_file: Path | None = None,
+        retry_failed_only: bool = False,
     ) -> Any:
         assert root_url == module.HUMAN_SPHERE_SITE.root_urls["en"]
         assert site is module.HUMAN_SPHERE_SITE
@@ -753,10 +866,11 @@ def test_file_namespace_image_titles_are_html_pages_not_binary_assets(
     result = module.download_wiki(root, tmp_path, language="en", site=site)
 
     assert result.failures == ()
-    assert (tmp_path / "File_Event_Interplanetary2016.JPG.html").read_bytes() == page
+    description_path = module.local_relative_path(description, site=site)
+    assert (tmp_path / description_path).read_bytes() == page
     assert (tmp_path / "images/0/01/Event_Interplanetary2016.JPG").read_bytes() == jpeg
     mirrored = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
-    assert 'href="File_Event_Interplanetary2016.JPG.html"' in mirrored
+    assert f'href="{description_path}"' in mirrored
     assert 'src="images/0/01/Event_Interplanetary2016.JPG"' in mirrored
     assert {record.title for record in result.pages} == {
         "Main_Page",
@@ -858,9 +972,10 @@ def test_human_sphere_case_only_titles_have_distinct_portable_paths() -> None:
     assert mixed == module.local_relative_path(
         base + "HaeTae", site=site, os_name="Linux"
     )
-    assert module.local_relative_path(
-        base + "File:Event_Interplanetary2016.JPG", site=site
-    ) == "File_Event_Interplanetary2016.JPG.html"
+    assert re.fullmatch(
+        r"File_Event_Interplanetary2016.JPG__u_[a-f0-9]{12}\.html",
+        module.local_relative_path(base + "File:Event_Interplanetary2016.JPG", site=site),
+    )
     # Existing assets should retain their previous paths for efficient resume.
     assert module.local_relative_path(
         base + "images/thumb/2/23/1121.jpg", site=site, asset=True
@@ -1085,3 +1200,97 @@ def test_human_sphere_crawl_deduplicates_encoded_comma_and_literal_comma_links(
         for url in canonical_urls
     )
     assert len({page.path.casefold() for page in result.pages}) == len(result.pages)
+
+
+@pytest.mark.parametrize(
+    "suffixes",
+    [
+        ("jpg", "JPG", "Jpg"),
+        ("png", "PNG", "Png"),
+        ("jpeg", "JPEG", "Jpeg"),
+        ("webp", "WEBP", "WebP"),
+        ("wav", "WAV", "Wav"),
+        ("tif", "TIF", "Tif"),
+    ],
+)
+def test_human_sphere_file_page_extension_case_variants_are_distinct(
+    suffixes: tuple[str, str, str],
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    base = "https://www.human-sphere.com/File:Fusilier_Old5."
+    paths = [
+        module.local_relative_path(base + suffix, site=site)
+        for suffix in suffixes
+    ]
+
+    assert paths[0] == f"File_Fusilier_Old5.{suffixes[0]}.html"
+    for suffix, path in zip(suffixes[1:], paths[1:], strict=True):
+        assert re.fullmatch(
+            rf"File_Fusilier_Old5\.{suffix}__u_[a-f0-9]{{12}}\.html",
+            path,
+        )
+    assert len({path.casefold() for path in paths}) == len(paths)
+    assert module.local_relative_path(base + suffixes[1], site=site, os_name="Windows") == paths[1]
+    # Images and other actual assets are not remapped by this page-title rule.
+    assert module.local_relative_path(
+        "https://www.human-sphere.com/images/5/51/Fusilier_Old5.JPG",
+        asset=True,
+        site=site,
+    ) == "images/5/51/Fusilier_Old5.JPG"
+
+
+def test_human_sphere_crawl_preserves_file_pages_differing_only_by_extension_case(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    site = module.HUMAN_SPHERE_SITE
+    root = site.root_urls["en"]
+    lower = "https://www.human-sphere.com/File:Fusilier_Old5.jpg"
+    upper = "https://www.human-sphere.com/File:Fusilier_Old5.JPG"
+    jpeg_url = "https://www.human-sphere.com/images/5/51/Fusilier_Old5.JPG"
+    lower_body = b"<html><body>Lowercase source page</body></html>"
+    upper_body = b"<html><body>Uppercase source page</body></html>"
+    payloads = {
+        root: (
+            b'<html><a href="/File:Fusilier_Old5.jpg">Lower</a>'
+            b'<a href="/File:Fusilier_Old5.JPG">Upper</a>'
+            b'<img src="/images/5/51/Fusilier_Old5.JPG"></html>'
+        ),
+        lower: lower_body,
+        upper: upper_body,
+        jpeg_url: b"\xff\xd8\xff\xe0JPEG",
+    }
+    monkeypatch.setattr(
+        module, "fetch_all_page_titles",
+        lambda *, language, site: (
+            "Main Page", "File:Fusilier Old5.jpg", "File:Fusilier Old5.JPG"
+        ),
+    )
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    monkeypatch.setattr(
+        module, "fetch_bytes",
+        lambda url, *, language="en": payloads[url],
+    )
+
+    result = module.download_wiki(root, tmp_path, site=site)
+    lower_path = module.local_relative_path(lower, site=site)
+    upper_path = module.local_relative_path(upper, site=site)
+
+    assert result.failures == ()
+    assert lower_path == "File_Fusilier_Old5.jpg.html"
+    assert re.fullmatch(r"File_Fusilier_Old5.JPG__u_[a-f0-9]{12}\.html", upper_path)
+    assert (tmp_path / lower_path).read_bytes() == lower_body
+    assert (tmp_path / upper_path).read_bytes() == upper_body
+    assert (tmp_path / "images/5/51/Fusilier_Old5.JPG").read_bytes() == payloads[jpeg_url]
+    rewritten = (tmp_path / "Main_Page.html").read_text(encoding="utf-8")
+    assert f'href="{lower_path}"' in rewritten
+    assert f'href="{upper_path}"' in rewritten
+    assert len({path.relative_to(tmp_path).as_posix().casefold() for path in result.files}) == len(result.files)
+
+    import zipfile
+    archive_path = module.archive_wiki(
+        list(result.files), tmp_path / "archives", root=tmp_path, site=site
+    )
+    with zipfile.ZipFile(archive_path) as archive:
+        assert archive.testzip() is None
+        assert lower_path in archive.namelist()
+        assert upper_path in archive.namelist()

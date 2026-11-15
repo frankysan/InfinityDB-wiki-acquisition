@@ -45,6 +45,43 @@ from the downloader and shared archive/provenance Git history and the
   `snapshot.contentSha256` offline; the producer-relative path in the manifest is
   informational.
 
+### Added
+
+- **Acquisition:** Snapshot inventories now carry independently observed
+  source-page identities and offline-mirrored file identities. The crawler
+  persists private per-page original-HTML evidence, retains MediaWiki
+  `allpages` page IDs where provided, preserves markup ID disagreements,
+  observes actual HTTP response redirect targets, and distinguishes unverified
+  canonical/meta-refresh hints. References to images, stylesheets,
+  templates/modules and related namespace pages include evidence and target
+  resolution status without asserting transclusion; original source response
+  SHA-256 remains distinct from rewritten member SHA-256.
+- **Acquisition:** Immutable version 1 snapshot inventories are now published
+  alongside successful wiki ZIP/provenance outputs (under the selected
+  manifest directory's `inventories/` subfolder). They enumerate every ZIP
+  member with a SHA-256 digest, source URL evidence where known, mirrored
+  current-page identities, historical revision identities and reserved
+  source-lineage metadata. Unavailable response headers, omitted page IDs and
+  unknown source identities are explicitly distinguished from verified facts.
+  Inventory publication failures preserve work and retract this run's
+  ZIP/manifest; the v3 downstream handoff format is unchanged.
+- **Acquisition:** Separate private historical-revision checkpoints now retain
+  per-page `rvcontinue` tokens, revision inventories, completed oldid downloads
+  and page progress. `--include-history --resume-work` resumes failed or
+  interrupted revision acquisition without repeating previously committed
+  enumeration batches or oldid network requests. Incomplete history still
+  blocks ZIP/manifest publication; checkpoints never enter the archive.
+- **Acquisition:** Version 2 private crawl checkpoints capture enumeration
+  continuation, pending URL queue and previously completed work. An interrupted
+  `--resume-work` run now picks up from its last atomic checkpoint (per API
+  enumeration batch and about every 100 processed URLs), instead of re-fetching
+  every HTML page. Completed version 1 checkpoints remain compatible.
+- **Acquisition:** `--retry-failed-only --resume-work` retries failed URLs
+  and newly discovered descendants without restarting discovery. Checkpoint
+  validation rejects missing/changed files and wrong site/language; checkpoint
+  data never enters published ZIPs. Legacy work without a checkpoint retains
+  the full-resume fallback.
+
 ### Fixed
 
 - **Acquisition:** Collect and rewrite MediaWiki `srcset` candidates, including
@@ -58,7 +95,11 @@ from the downloader and shared archive/provenance Git history and the
   `Image:` description pages are now correctly classified as HTML even when
   their titles end in `.JPG`, `.png` or another image extension. HTML
   `<link rel="canonical">` and license metadata now resolve as page links
-  rather than causing spurious binary-asset failures.
+  rather than causing spurious binary-asset failures. MediaWiki namespace
+  source pages such as `Module:Infobox/styles.css`, including corresponding
+  talk namespaces (for example `Module_talk:Infobox/styles.css`), are likewise
+  mirrored as HTML instead of failing asset validation; genuine CSS/JS assets
+  are unaffected.
 - **Acquisition:** Canonicalize percent-encoded versus literal URL punctuation
   before queue deduplication, fixing false collisions between links such as
   `Arslan%2C_Security_Chief` and `Arslan,_Security_Chief` without merging
@@ -70,7 +111,9 @@ from the downloader and shared archive/provenance Git history and the
   non-ASCII characters now receive deterministic disambiguation suffixes so
   names like `Aibot` and `Aibōt` can coexist. Nonstandard ASCII casing on
   Human Sphere HTML pages likewise gets a stable suffix, so `Haetae` and
-  `HaeTae` remain separate, without renaming already-downloaded assets.
+  `HaeTae` remain separate. Case variants of file-description extensions
+  (such as `File:Fusilier_Old5.JPG` and `File:Fusilier_Old5.jpg`) also
+  remain distinct without renaming already-downloaded binary assets.
 
 - **Acquisition:** Prevented concurrent Wiki/Human Sphere acquisitions from
   clobbering a previously published v3 snapshot manifest or another run's

@@ -110,13 +110,25 @@ def _nonstandard_page_case(value: str) -> bool:
 
     Pick one ordinary, capitalized spelling per case-insensitive class; retain
     its readable name. Other spellings get stable source-identity suffixes.
-    Preserve backend endpoints and file extensions within File: page titles.
+    Preserve backend endpoints. Filename-like suffixes are part of the source
+    identity: .JPG and .jpg may name two different File: description pages.
     """
     title = value[:-5] if value.endswith(".html") else value
     if title.casefold() in {"index.php", "api.php", "load.php"}:
         return False
+    extension = Path(title).suffix
+    # CSS/JS source subpages conventionally use all-lowercase filenames:
+    # styles.css is the readable path, Styles.css gets a distinct suffix.
+    if ":" not in title and extension.lower() in {".css", ".js"}:
+        return title != title.lower()
+    # The lowercase extension is our conventional spelling. A case variant
+    # must have its own hashed path even when the rest of the title is identical.
+    # Apply this to any extension so uncommon file types are not overlooked.
+    if extension and extension != extension.lower():
+        return True
     words = re.findall(r"[A-Za-z][A-Za-z0-9]*", title)
-    if re.search(r"\.(?:jpe?g|png|gif|webp|svg|avif|pdf|zip|rar|tiff?)$", title, re.I):
+    if extension and re.fullmatch(r"\.[A-Za-z][A-Za-z0-9]*", extension):
+        # Do not apply title-case rules to a lowercase file extension.
         words = words[:-1]
     return any(word != word[0].upper() + word[1:].lower() for word in words)
 

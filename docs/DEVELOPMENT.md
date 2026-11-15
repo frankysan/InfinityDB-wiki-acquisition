@@ -25,6 +25,34 @@ Agents start with [AGENTS.md](../AGENTS.md).
   assets that fail do not create a finished ZIP/manifest. A partial
   `--resume-work` tree is work evidence, not a published snapshot.
   Optional/missing links must retain their explicit classification.
+- Store a private, versioned crawl checkpoint during enumeration (with
+  MediaWiki continuation tokens) and crawling (with a pending URL queue).
+  Persist atomically at batch/periodic boundaries and on completed discovery.
+  Resume must validate site/language and saved paths, avoid repeating committed
+  HTML fetches, and preserve the normal complete-archive gate. Retry-only runs
+  require a completed-discovery checkpoint. Keep v1 completed checkpoints
+  readable, and use full discovery for older work with no checkpoint.
+  A separate private history checkpoint preserves `rvcontinue`, page identity,
+  enumerated revisions, downloaded oldids and page progress; commit each
+  revision API batch and periodic oldid batches atomically. A failed historical
+  request blocks publication and resumes from its recorded point, without
+  re-enumerating committed batches. Validate history and current-page
+  completeness independently. Checkpoint JSON is work metadata, not a ZIP
+  member or a published manifest.
+- Produce one immutable, versioned snapshot inventory after successful
+  ZIP/provenance creation and before removing the work directory. Keep it
+  alongside the manifest in an `inventories/` subdirectory, not inside the
+  ZIP. Record each ZIP member's content hash and source evidence where
+  available. Capture original-response hashes, source HTML relationships
+  and final HTTP URLs in private per-page evidence before rewriting links.
+  Retain `allpages` numeric IDs where supplied, and preserve HTML ID hints
+  independently; never collapse contradictory identities. Canonical
+  declarations and meta-refresh hints are not automatically HTTP redirects.
+  Template/module page links are not verified render dependencies; mark
+  missing identities, unobserved headers and transclusions as unknown.
+  The existing v3 manifest and ZIP remain the independent consumer contract;
+  if inventory publication fails, retract this run's newly created manifest
+  and ZIP and preserve the work directory for recovery.
 - Treat MediaWiki redirects, aliases, archive member safety, repeated
   paths, HTML-with-asset extensions, language differences and case-folding
   collisions as source-format concerns. Preserve true source identities

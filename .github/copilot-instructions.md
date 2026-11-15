@@ -18,3 +18,8 @@ Run offline focused checks first. Use live acquisition and external tools
 only when deliberately selected, and never claim that a producer test alone
 validates a changed InfinityDB consumer. Report exact revisions, artifact
 identity, performed checks, remaining integration work and any blockers.
+
+For a handoff **prompt** to a fresh ChatGPT.com chat, Codex session or
+Copilot Agent session, use `.agents/skills/handoff/SKILL.md` with the
+destination `chat`, `codex` or `copilot`. This prepares copy-ready text;
+it does not invoke another agent or change the repository.
