@@ -1,824 +1,555 @@
 # Infinity Wiki / Human Sphere acquisition
 
-Standalone **source acquisition** for InfinityDB research. This repository
-contains no downloaded source documents, game data or graphical assets.
-Raw third-party materials remain outside its source license.
+A standalone, command-line **source acquisition and archival tool** for
+[InfinityDB](https://github.com/frankysan/InfinityDB). It downloads supported
+MediaWiki pages, linked resources and optionally page-revision history; rewrites
+links for offline browsing; and publishes independently verifiable snapshot
+artifacts. It does **not** interpret Infinity rules or publish data into the
+InfinityDB application.
 
-## Offline development
+**Important:** Running `infinity-wiki-snapshot` accesses the selected external
+wiki. A normal build, test run or InfinityDB deployment does **not** start a
+crawl. Downloaded pages and assets are third-party material, separate from this
+repository's source-code license.
 
-The code requires Python 3.11 or newer and uses only the standard library.
-Install locally with `python -m pip install -e ".[test]"`, then run
-`python -m pytest -q`. The tests mock network fetches and require no
-local Wiki/Army/PDF archives.
+## Contents
 
-## Explicit acquisition
+1. [Requirements and installation](#1-requirements-and-installation)
+2. [Choose an acquisition mode](#2-choose-an-acquisition-mode)
+3. [Quick start](#3-quick-start)
+4. [Complete command-line option reference](#4-complete-command-line-option-reference)
+5. [Working with completed snapshots](#5-working-with-completed-snapshots)
+6. [Resuming interrupted work](#6-resuming-interrupted-work)
+7. [Artifacts, provenance and verification](#7-artifacts-provenance-and-verification)
+8. [Source evidence and reuse limitations](#8-source-evidence-and-reuse-limitations)
+9. [Additional commands and audit tools](#9-additional-commands-and-audit-tools)
+10. [Troubleshooting, compatibility and further documentation](#10-troubleshooting-compatibility-and-further-documentation)
 
-Run from the desired working directory:
+## 1. Requirements and installation
+
+- **Python 3.11 or newer.** Runtime dependencies use only the Python standard
+  library. The optional test extra installs pytest.
+- **Internet access** for an acquisition or update, with sufficient disk space
+  for a complete snapshot and (when selected) its history and source replay.
+- **A filesystem supporting hard links** for the no-replace manifest
+  publication mechanism. Normal offline verification does not require a crawl
+  work directory or network access.
+
+From a checkout of this repository:
+
+```powershell
+python -m pip install -e .
+infinity-wiki-snapshot --help
+```
+
+To install test dependencies and run the fully mocked, offline test suite:
+
+```powershell
+python -m pip install -e ".[test]"
+python -m pytest -q
+```
+
+All relative paths below resolve from the directory where the command is
+started. Choose that directory deliberately or pass explicit output paths.
+
+### Supported sources
+
+| `--site` | `--language` | Source | Default archive prefix |
+| --- | --- | --- | --- |
+| `infinity-wiki` (default) | `en` (default) | [Infinity Wiki](https://infinitythewiki.com/) | `WIKI-en` |
+| `infinity-wiki` | `es` | [Infinity Wiki, Spanish](https://infinitythewiki.com/es/) | `WIKI-es` |
+| `human-sphere` | `en` | [Human Sphere](https://www.human-sphere.com/Main_Page) | `HUMAN-SPHERE` |
+
+Human Sphere does **not** support `--language es`. A source's language is
+inferred from verified parent artifacts for archive-derived operations;
+explicit site/language values must match that parent.
+
+## 2. Choose an acquisition mode
+
+The command has three main modes. Each creates a **new, complete snapshot**
+rather than altering an earlier archive.
+
+| Mode | How to select it | What it downloads | Parent required? |
+| --- | --- | --- | --- |
+| **Fresh acquisition** | No `--from-snapshot` or `--update-from` | Current pages and resources; optionally all revisions with `--include-history` | No |
+| **History upgrade** | `--from-snapshot PARENT.zip --include-history` | Revision enumeration and missing oldid HTML; inherits verified current pages/assets without refetching them | Yes: ZIP, manifest, inventory |
+| **Current-content update** | `--update-from PARENT.zip` | Fresh page discovery and current HTML; checks/downloads assets; automatically preserves history if the parent has it | Yes: ZIP, manifest, inventory |
+
+The important distinction is **history upgrade versus current-content update**.
+A history upgrade preserves the original current HTML exactly as captured;
+it does not refresh the wiki's present-day pages. An update refreshes current
+pages and incorporates changes while preserving and reconciling previously
+archived history where applicable.
+
+You can also **resume** any of the three modes by supplying the preserved
+`--resume-work` directory from its interrupted run. See [section 6](#6-resuming-interrupted-work).
+
+## 3. Quick start
+
+### A. Acquire the current Infinity Wiki
 
 ```powershell
 infinity-wiki-snapshot --site infinity-wiki --language en
-infinity-wiki-snapshot --site infinity-wiki --language es
+```
+
+For Spanish, substitute `--language es`. For Human Sphere, use:
+
+```powershell
 infinity-wiki-snapshot --site human-sphere --language en
 ```
 
-The default ZIP directory is `local/data/wiki/`, the matching manifest
-directory is `local/data/manifests/snapshots/`, and incomplete crawl work
-is kept under `local/work/wiki/`, relative to the working directory.
-Completed snapshots also receive an inventory in the manifest directory's
-`inventories/` subdirectory.
-The existing `--root`, `--work-root` and `--manifest-dir` options still
-accept `data/wiki`, `data/work/wiki` and `data/manifests/snapshots` respectively.
-Paths in the producer checkout
-are not automatically available in InfinityDB; transfer selected ZIP/manifest
-pairs without rewriting their provenance.
-
-`--include-history` additionally archives MediaWiki revisions; `--resume-work`
-uses a preserved incomplete crawl. Partial/failed crawls never publish a ZIP
-or manifest. Archive acquisition is optional and never runs during an
-InfinityDB build, serve or Docker deployment.
-
-### Resume interrupted crawls and retry failed URLs
-
-Acquisitions now write a private, versioned
-`.wiki-crawl-checkpoint.json` file in their `.work` directory. It records the
-site/language, discovered URLs, saved file paths and sizes, ignored and failed
-URLs, **the ordered pending queue**, and MediaWiki `allpages` continuation.
-The checkpoint is written atomically after each enumeration batch, about
-every 100 completed URL attempts, and when discovery finishes. On abrupt
-termination, up to 100 URL attempts may be replayed from the last checkpoint;
-previously committed HTML pages are not refetched.
-
-To continue an interrupted crawl, use the existing command:
+To retain the exact **original current-page HTML** in an additional portable
+companion ZIP for independent link-rewrite verification, opt in **from the
+start**:
 
 ```powershell
-infinity-wiki-snapshot --site human-sphere --language en --resume-work "local/work/wiki/HUMAN-SPHERE 20261114-170628.work"
+infinity-wiki-snapshot --site infinity-wiki --language en --source-replay-dir "local/data/wiki-source-replay"
 ```
 
-An existing checkpoint makes normal `--resume-work` continue the saved
-enumeration or crawl queue; completed checkpoints can also resume pending
-failures. The checkpoint is **never included** in the published ZIP.
+This is optional. It increases storage, does not preserve original HTML for
+historical oldid pages, and does **not** enable conditional HTML download
+skipping.
 
-For a preserved, checkpointed run with failures:
+### B. Upgrade a completed non-history snapshot to include history
+
+First complete the fresh run and identify its ZIP, matching provenance JSON
+and inventory JSON (paths described in [section 7](#7-artifacts-provenance-and-verification)).
+Then run:
 
 ```powershell
-infinity-wiki-snapshot --site human-sphere --language en --resume-work "local/work/wiki/HUMAN-SPHERE 20261114-170628.work" --retry-failed-only
+infinity-wiki-snapshot `
+  --from-snapshot "local/data/wiki/WIKI-en 20261115-180000.zip" `
+  --include-history
 ```
 
-This mode skips the initial allpages query and does not refetch already
-completed pages or assets. It retries the recorded failures, follows any
-new links from successfully recovered HTML pages, and publishes the normal
-ZIP/manifest pair **only when no failures remain**. If another failure
-occurs, its updated record stays in the same checkpoint for another retry.
-Saved HTML links are repaired locally if a retried URL has been reclassified
-between asset and page since the earlier run.
-
-Older work directories without a checkpoint cannot use retry-only safely,
-because their complete discovered-URL set was not recorded. Run one normal
-`--resume-work` first; this re-enumerates and refetches HTML but reuses
-valid binary assets and creates checkpoints as it progresses.
-A missing or changed *checkpointed* saved file, or a site/language mismatch,
-fails closed rather than silently certifying incomplete work.
-### Upgrade completed snapshots with history (P2.1–P2.2)
-
-A completed **non-history** snapshot with its matching v3 provenance JSON and
-v1 inventory can be upgraded into a *new* history-enabled snapshot without
-re-downloading any current HTML or assets:
+The date in this example is illustrative; use the **actual** filename from
+your acquisition. By default, the matching parent JSON paths are found from
+the parent ZIP's stem under `--manifest-dir`. If the three parent files are
+stored elsewhere, specify them explicitly:
 
 ```powershell
-infinity-wiki-snapshot --from-snapshot "local/data/wiki/WIKI-en 20261114-120000.zip" --include-history
+infinity-wiki-snapshot `
+  --from-snapshot "D:\WikiArchive\parent.zip" `
+  --from-manifest "D:\WikiArchive\parent.json" `
+  --from-inventory "D:\WikiArchive\parent.inventory.json" `
+  --include-history
 ```
 
-The command looks for the parent manifest at
-`--manifest-dir/<parent ZIP stem>.json` and its inventory at
-`--manifest-dir/inventories/<parent ZIP stem>.inventory.json`.
-Use `--from-manifest <path>` and `--from-inventory <path>` for
-other locations. The parent site and language are inferred from verified
-inventory/provenance; explicit `--site` and `--language` values must match.
-New outputs use the normal `--root`, `--manifest-dir` and
-`--work-root` destinations, with a `-history` archive identity.
+History upgrade also accepts an already history-enabled parent: it refreshes
+the revision enumeration and reuses previously archived oldid bytes only when
+their IDs, parent IDs, timestamps and page associations match verified parent
+evidence. All parent files remain unchanged.
 
-The parent ZIP, manifest and inventory are checked by
-`verify_snapshot` **before any network requests**. Every inherited
-current-page and asset member is copied byte-for-byte into fresh work.
-Original page IDs, source URLs, captured HTTP evidence, mirrored byte hashes,
-references and ignored-URL evidence are retained in the new inventory.
-New MediaWiki revision lists are always enumerated. If the parent already
-contains history, previously archived rendered oldid bytes are reused when
-their **revision ID, parent ID, timestamp and previously recorded current-page
-association** agree with the fresh API enumeration. Missing oldids are
-downloaded. A different canonical title returned for the *same page URL*
-does not by itself invalidate a matching oldid; the new history index records
-the updated canonical title. This also supports multiple page aliases
-referencing the same global oldid without downloading it repeatedly.
-
-If an oldid changes identity, a prior oldid disappears from enumeration, or
-a recorded page/oldid association disappears, publication is blocked pending
-explicit reconciliation. A matching numeric oldid alone never proves a
-previously unseen URL is an alias. Current HTML/assets are never refreshed
-by this command; the separate `--update-from` path handles current-content
-refreshes (P2.3).
-
-The original files never change. The new v3 manifest records the parent ZIP
-as `inputArtifact`, and the v1 inventory records the exact parent ZIP,
-manifest and inventory hashes. For history parents, the sidecar additionally
-records `parentHistory: true` and `reusedRevisionCount`. The new history
-index and revision-to-page metadata always reflect the **fresh** enumeration,
-even when rendered revision bytes were reused.
-
-**Identity boundary:** every inherited member must already be classified
-as a current page with an explicit source URL/title, or as a known asset.
-Unknown members might be missing page identities and block upgrading instead
-of silently omitting their history. In a history parent, oldid and history-index
-members are handled separately, never mistaken for current pages or assets.
-Conservative P1.4 inventories containing
-unknown members therefore need independent source-identity review first.
-
-**Time and cutoff semantics:** the original current HTML retains its
-*original acquisition time* across repeated history upgrades (rather than
-inheriting the most recent history archive's timestamp). The new inventory
-independently records `currentContentAcquiredAt` and `historyRetrievedAt`;
-the new manifest's
-`acquiredAt` is when the *new history snapshot* is built. The history scope is
-`all-observed`: fetch all revisions the source API advertises during the
-upgrade, **including revisions newer than the inherited current HTML**.
-There is no historical date cutoff or promise of an exact as-of-time corpus
-in P2.1/P2.2. Date-bounded historical reconstructions need separately designed
-source/coverage semantics; the command does not mislabel a partial history as
-complete.
-
-On a required revision failure, no ZIP/manifest/inventory is published.
-The staging directory and history checkpoint are preserved for inspection.
-
-**Resume an interrupted archive-derived history upgrade (P2.5a):**
-Reuse the exact verified parent ZIP, manifest and inventory and pass the
-preserved work directory from the failed run:
+### C. Acquire current pages and full history in one fresh run
 
 ```powershell
-infinity-wiki-snapshot --from-snapshot "local/data/wiki/WIKI-en 20261114-120000.zip" --include-history --resume-work "local/work/wiki/WIKI-en-history 20261115-160000.work"
+infinity-wiki-snapshot --site infinity-wiki --language en --include-history
 ```
 
-The private `.wiki-archive-run.json` receipt binds the exact parent
-ZIP/manifest/inventory SHA-256s, site, language, mode and options **before**
-any network fetches on resume. Resumed work must contain that receipt.
-Existing copied parent members are SHA-256 checked against the verified
-parent; altered or missing checkpointed oldid files fail closed rather
-than silently publishing. The history checkpoint resumes pagination or
-the next unfinished oldid, while a private parent-oldid reuse log preserves
-the original transfer accounting if a history parent was interrupted.
-An already saved oldid is not fetched twice. Success deletes staging as
-usual; failure preserves it. The receipt and accounting log are private,
-never members of the new ZIP. Parent files are never modified.
-`--retry-failed-only` remains reserved for ordinary crawl checkpoints,
-not archive-derived history upgrades. Archive-derived current refreshes
-also support `--resume-work` (see P2.5b below). For complete
-recovery commands and acceptance limits, see
+History mode downloads all public revisions advertised by the wiki for every
+mirrored current page. This can take much longer and require significantly
+more storage. It is **not** a date-bounded historical reconstruction:
+`all-observed` history may include revisions newer than an inherited current
+HTML snapshot.
+
+### D. Refresh a completed archive
+
+```powershell
+infinity-wiki-snapshot --update-from "local/data/wiki/WIKI-en 20261115-180000.zip"
+```
+
+The updater verifies the parent artifacts before network access, scans
+RecentChanges as observation evidence, performs fresh page enumeration,
+downloads every current HTML page and processes linked assets. A
+history-enabled parent retains/reconciles its oldids automatically.
+
+For a history parent whose former page IDs disappear from current
+enumeration, the default is to **stop rather than infer deletion**.
+You can explicitly retain those missing pages as historical-only records:
+
+```powershell
+infinity-wiki-snapshot `
+  --update-from "path/to/history-parent.zip" `
+  --allow-historical-only
+```
+
+This opt-in can produce a **v2 history index and v2 inventory**, which require
+a separately compatible downstream reader. Only use it when preservation of
+unresolved former pages is intentional.
+
+## 4. Complete command-line option reference
+
+The following table covers **every** `infinity-wiki-snapshot` argument
+implemented in `src/infinity_wiki_acquisition/cli.py`. Options are
+case-sensitive. Square-bracketed values in the syntax below denote
+placeholders, not literal characters.
+
+### Source, content and acquisition modes
+
+| Option | Default | Purpose and rules |
+| --- | --- | --- |
+| `--site {infinity-wiki,human-sphere}` | `infinity-wiki` | Select the source wiki. For parent-derived runs it is inferred; an explicitly supplied value must match the parent. |
+| `--language {en,es}` | `en` | Select the wiki language. Human Sphere is English-only. For parent-derived runs, source language is inferred unless explicitly provided. |
+| `--include-history` | Off | In a fresh run, download every advertised rendered oldid revision. **Required** with `--from-snapshot`. With `--update-from`, it is valid only if the parent already contains history; a history parent is preserved even without the flag. |
+| `--from-snapshot PATH` | Not set | Upgrade a verified, complete snapshot to a new history archive; **must** accompany `--include-history`. Works with both non-history and history-enabled parents. Does not fetch current HTML/assets again. |
+| `--update-from PATH` | Not set | Produce a new snapshot from a verified parent, refreshing current discovery/pages/assets. If the parent has history, refresh/reconcile its history as well. Cannot combine with `--from-snapshot` or `--retry-failed-only`. |
+| `--allow-historical-only` | Off | With `--update-from` and a history-enabled parent, explicitly retain formerly current pages missing from current enumeration. May emit v2 history/index inventory records; never treat absence as verified deletion. |
+
+### Parent artifacts and destinations
+
+| Option | Default | Purpose and rules |
+| --- | --- | --- |
+| `--from-manifest PATH` | `--manifest-dir/<parent-stem>.json` | Select the matching **parent v3 provenance manifest** for `--from-snapshot` or `--update-from`. Cannot be used alone. |
+| `--from-inventory PATH` | `--manifest-dir/inventories/<parent-stem>.inventory.json` | Select the matching **parent v1/v2 inventory**. Cannot be used alone. Missing or contradictory parent evidence fails verification. |
+| `--root DIRECTORY` | `local/data/wiki` | Destination for newly published, timestamped snapshot ZIPs. Existing ZIPs are not replaced. |
+| `--manifest-dir DIRECTORY` | `local/data/manifests/snapshots` | Destination for matching provenance JSON; inventory JSON goes in its `inventories/` subdirectory. Also determines default parent sidecar lookup locations. |
+| `--work-root DIRECTORY` | `local/work/wiki` | Parent directory for newly created `*.work` staging directories. A failed run retains its own staging directory here; a resumed run uses the explicit `--resume-work` path instead. |
+| `--source-replay-dir DIRECTORY` | Off | Create a **separate** original-HTML replay companion ZIP from a fresh crawl or `--update-from`. Ineligible with `--from-snapshot` because a history-only upgrade fetches no current HTML. On resume, use the same selection as the original run. |
+
+### Recovery and help
+
+| Option | Default | Purpose and rules |
+| --- | --- | --- |
+| `--resume-work DIRECTORY` | Not set | Reopen a preserved `*.work` directory. Normal crawls use their crawl/history checkpoints; archive-derived modes additionally verify a run receipt bound to the exact parent ZIP, manifest, inventory and acquisition options. |
+| `--retry-failed-only` | Off | **Ordinary crawls only.** With `--resume-work` and a checkpoint with completed discovery, retry recorded failed URLs without restarting discovery. Cannot combine with `--from-snapshot` or `--update-from`. Not a replacement for general resume. |
+| `-h`, `--help` | — | Print the installed CLI's actual help text and exit without starting a crawl. |
+
+### Valid combinations at a glance
+
+| Operation | Required | Optional/relevant | Not permitted |
+| --- | --- | --- | --- |
+| Fresh current snapshot | Source/language are optional | `--source-replay-dir`, destinations | Parent selection flags |
+| Fresh with history | `--include-history` | `--source-replay-dir`, destinations | Parent selection flags |
+| History upgrade | `--from-snapshot` + `--include-history` | `--from-manifest`, `--from-inventory`, `--resume-work` | `--update-from`, `--source-replay-dir`, `--retry-failed-only` |
+| Current-content update | `--update-from` | Parent sidecars, `--source-replay-dir`, `--resume-work`; history-related flags under their constraints | `--from-snapshot`, `--retry-failed-only` |
+| Ordinary resume | Same initial mode/site/language + `--resume-work` | `--include-history` if selected initially | Changing the completed source scope |
+| Retry only failed crawl URLs | `--resume-work` + `--retry-failed-only` | Same source selection as the original ordinary crawl | Archive-derived modes; incomplete discovery |
+
+The two parent-derived modes require a fully verified parent **ZIP + v3
+provenance manifest + inventory**. A legacy archive that has no inventory
+must first go through the [legacy indexing workflow](#legacy-inventory-indexing)
+where eligible; a reconstructed inventory cannot supply missing source
+identities for an unsafe upgrade.
+
+## 5. Working with completed snapshots
+
+### History upgrades versus current updates
+
+A history upgrade uses the verified parent as a source of unchanged current
+HTML/assets and retrieves all visible revisions. It checks previous oldid
+identity and association rather than equating matching numeric IDs with
+an arbitrary new page. Current content retains its **original acquisition
+time**; history acquisition is recorded separately.
+
+A current-content update always rediscovers and refetches current HTML on
+its initial pass. A resumed update can retain **already checkpointed current
+pages** from the same interrupted run; it never treats an old parent HTML
+page as a substitute merely because its latest revision is unchanged.
+
+For assets, the updater may reuse verified parent bytes instead of downloading
+the body when **either** of these independent proofs holds:
+
+- The latest MediaWiki `imageinfo` identifies the exact original upload URL,
+  timestamp, SHA-1 and size, matching the verified parent bytes.
+- A strong HTTP ETag from an exact parent URL and effective URL matches an
+  HTTP `304 Not Modified` response to `If-None-Match`. Weak validators,
+  redirects and HTTP `200` require fresh download or rejection.
+
+New/changed assets are fetched and checked. Missing or ambiguous version
+evidence is **not** approval to reuse the parent. Failed downloads prevent
+a finished snapshot.
+
+### Source identity and unavailable former pages
+
+A current page's **source URL, page ID, original HTTP response and mirror
+path** are separate identities. Source title aliases, moves and missing
+pages are reconciled only when evidence is sufficient. A missing page ID
+cannot be assumed deleted: it may have moved namespaces or become
+inaccessible.
+
+With `--allow-historical-only`, the updater can retain last-archived
+HTML and oldids under explicit v2 `historicalOnlyPages` records. These
+records are **not** current content and do not claim fresh revision
+enumeration. A previously retired identity reappearing in live discovery
+requires separate reinstatement review, not silent promotion.
+
+For the detailed producer/consumer v2 contract, see
+[development guidance](docs/DEVELOPMENT.md). **Do not feed v2 history
+snapshots to an unverified v1-only downstream consumer.**
+
+## 6. Resuming interrupted work
+
+A required page/asset/revision failure or failed publication leaves the
+private work directory available. Once the cause of failure is fixed, use
+the **same** mode, source and options with `--resume-work`.
+
+### Ordinary interrupted crawl
+
+```powershell
+infinity-wiki-snapshot `
+  --site infinity-wiki --language en `
+  --resume-work "local/work/wiki/WIKI-en 20261115-180000.work"
+```
+
+If discovery was already completed and you specifically want to retry failed
+URLs only, add `--retry-failed-only`. Normal resume can continue unfinished
+`allpages` pagination, pending URLs or history revision pagination. Retry-only
+is not available until the entire discovered URL set was checkpointed.
+
+```powershell
+infinity-wiki-snapshot `
+  --site infinity-wiki --language en `
+  --resume-work "local/work/wiki/WIKI-en 20261115-180000.work" `
+  --retry-failed-only
+```
+
+### Interrupted history upgrade
+
+```powershell
+infinity-wiki-snapshot `
+  --from-snapshot "path/to/parent.zip" `
+  --from-manifest "path/to/parent.json" `
+  --from-inventory "path/to/parent.inventory.json" `
+  --include-history `
+  --resume-work "path/to/preserved.work"
+```
+
+### Interrupted current-content update
+
+```powershell
+infinity-wiki-snapshot `
+  --update-from "path/to/parent.zip" `
+  --from-manifest "path/to/parent.json" `
+  --from-inventory "path/to/parent.inventory.json" `
+  --resume-work "path/to/preserved.work"
+```
+
+Add the original `--allow-historical-only`, `--include-history` or
+`--source-replay-dir` options if they were selected when the update began.
+
+Archive-derived work contains a private `.wiki-archive-run.json` receipt
+binding the operation and options to the exact parent ZIP/manifest/inventory
+SHA-256s. Current updates also retain a bounded RecentChanges scan, crawler
+checkpoint, asset-version decisions and (where completed) post-crawl source
+observations. History uses a separate `.wiki-history-checkpoint.json` and
+verified parent-oldid accounting.
+
+**What resume guarantees:** committed checkpoint pages/assets/oldids are
+checked and reused; incorrectly matched or corrupt evidence fails closed;
+parent artifacts are not rewritten; publication remains all-or-nothing.
+Uncommitted in-flight URL attempts or revision batches **may be repeated**.
+Do not interpret resumability as globally exactly-once HTTP requests.
+
+For step-by-step diagnostics and the acceptance test matrix, see
 [archive-derived recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md).
 
-### Refresh a completed current-content snapshot (P2.3a–b)
+## 7. Artifacts, provenance and verification
 
-A verified ZIP with matching v3 provenance and v1 inventory can seed
-a separate current-content refresh. If the parent includes historical
-oldids, the update automatically retains history:
+### Published files
 
-```powershell
-infinity-wiki-snapshot --update-from "local/data/wiki/HUMAN-SPHERE 20261001-120000.zip"
-```
+A successful run normally publishes **three immutable artifacts**:
 
-As with `--from-snapshot`, the default parent JSON paths are resolved below
-`--manifest-dir`; `--from-manifest` and `--from-inventory` override those
-inputs. The source site/language are inferred and explicit mismatches fail
-before any network requests. `--update-from` cannot be combined with
-`--from-snapshot` or `--retry-failed-only`, but can now resume using
-`--resume-work` with a matching private run receipt.
-The optional `--include-history` is accepted
-only when the parent already contains history; without it, history is
-preserved automatically whenever present. Adding history to a
-non-history archive still uses `--from-snapshot --include-history`.
+| Artifact | Example path | Contents |
+| --- | --- | --- |
+| Snapshot ZIP | `local/data/wiki/WIKI-en 20261115-180000.zip` | Offline-rewritten current pages, downloaded assets, optional historical oldid HTML and history index |
+| Provenance v3 JSON | `local/data/manifests/snapshots/WIKI-en 20261115-180000.json` | Acquisition/source identity, exact ZIP SHA-256, logical-content SHA-256 and any parent ZIP input binding |
+| Inventory v1 or v2 JSON | `local/data/manifests/snapshots/inventories/WIKI-en 20261115-180000.inventory.json` | Every ZIP member's size/hash/classification, observed source identities and relationships, parent lineage, ignored/unknown source evidence |
 
-**Resume an interrupted current-content update (P2.5b):**
-Use the **same verified parent ZIP, manifest and inventory** that started
-the update, and supply the preserved work path printed after a failed run:
+The three filenames share their **actual snapshot stem**. With history,
+the archive prefix includes `-history`. Supported prefixes are
+`WIKI-en`, `WIKI-es` and `HUMAN-SPHERE`.
 
-```powershell
-infinity-wiki-snapshot --update-from "local/data/wiki/HUMAN-SPHERE 20261001-120000.zip" --resume-work "local/work/wiki/HUMAN-SPHERE 20261115-160000.work"
-```
+With `--source-replay-dir`, a separate **fourth optional artifact** named
+`<archive stem>.source-replay.zip` preserves the exact original current-page
+HTML alongside a versioned index. It is bound to the three published
+artifacts by SHA-256. It is not part of the standard snapshot ZIP and is
+not produced by a history-only upgrade.
 
-Keep the original options on resume, including `--allow-historical-only`
-and `--source-replay-dir` when originally selected; the private run
-receipt checks these options before any source requests. A previously
-completed RecentChanges scan is used unchanged rather than requested
-again. The crawl checkpoint resumes the last committed allpages
-continuation, remaining source URLs and previously saved pages/assets;
-stored page rewrite hashes, original-HTML replay inputs (when enabled),
-asset-version observations and their actual body hashes are verified
-before trusting completed work. Uncommitted downloads are still
-revalidated before publication; conflicting or missing evidence blocks
-the resume rather than silently claiming completeness.
+Private `*.work` files (crawl/history checkpoints, HTTP observations,
+RecentChanges evidence and run receipts) are **never** ZIP members.
+Successful runs remove staging when possible. Failed runs retain it for
+diagnosis and recovery. Snapshot output and parent files are never
+silently replaced.
 
-If current HTML acquisition finished before interruption, matching
-post-crawl current-revision and template/category observations can also
-be reused after checking their exact page ID, URL, path and original
-fetch time. A history-enabled parent resumes outstanding oldid
-enumeration/downloads, preserving actual oldid reuse counts and v2
-historical-only pages. HTTP 304 and MediaWiki imageinfo asset reuse
-counts are restored from per-asset evidence bound to saved file bytes.
-The immutable parent and existing ZIP/v3 manifest/v1-v2 inventory
-contracts are unchanged; raw resume receipts remain private. No HTML
-response-body skipping or stronger rendered-freshness claim is enabled.
-With no `--resume-work`, updates behave as before. Generic post-staging
-verification or publication errors now also print the exact preserved work
-path, not just the exception text. Only checkpoint-committed requests are
-guaranteed not to repeat; interrupted in-flight batches may run again.
-See [archive-derived recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md)
-for both operation modes, explicit parent paths and an offline acceptance
-matrix.
+### Independently verify a snapshot
 
-**Page HTML remains a conservative full refresh; binary asset bodies
-can be reused with fresh version evidence.** The producer first verifies
-the parent artifacts, requests an auditable MediaWiki RecentChanges window,
-and performs **fresh, paginated allpages enumeration**, even for sites
-that normally start with link discovery. It refetches every current HTML
-page and rewrites links from the newly retrieved source response.
-
-The asset reuse decision has two independent, fail-closed paths:
-
-- **MediaWiki original uploads:** For an original `/images/` URL on the
-  source Wiki (not a thumbnail), the updater requests the latest
-  `prop=imageinfo` record. It requires the reported upload URL to
-  match the *exact* requested URL, a valid upload timestamp, and SHA-1
-  plus size matching the bytes from the independently verified parent ZIP.
-  Only then can it reuse the original member without requesting the
-  upload body. Changed uploads are downloaded and checked against the
-  newly observed file version. Unavailable, ambiguous, or malformed
-  imageinfo falls back to ordinary HTTP download.
-- **Strong HTTP ETag:** For assets without usable upload evidence,
-  a verified parent may supply a strong ETag captured from a previous
-  unredirected HTTP response for that precise URL. The updater sends
-  `If-None-Match` and accepts parent bytes **only** when the response
-  is HTTP 304 with the identical strong ETag, effective URL, and no body.
-  Weak/missing validators, redirects, or an HTTP 200 response never
-  authorize a conditional skip. Contradictory 304 evidence blocks reuse.
-
-HTTP observations are captured in private `.wiki-asset-evidence/`
-work files and published as optional v1 inventory `sourceVersion`
-evidence, bound to source URL and member SHA-256. MediaWiki upload
-identities are independently published as optional `uploadVersion`
-records (original URL, upload title, SHA-1, size, timestamp, observation
-time and whether its bytes were reused). Every upload SHA-1 is also
-recomputed from the published ZIP contents by `verify_snapshot`.
-The inventory reports HTTP-304 and upload-SHA-1 reuse counts separately.
-Existing archives without either version source remain compatible; a
-missing proof simply requires a body download. Filename matches,
-RecentChanges coverage, unchanged page IDs and `Last-Modified` alone
-are never reasons to skip. Required failures block publication and
-preserve work.
-
-A new complete ZIP, matching v3 manifest (including parent
-`inputArtifact`), and independently verified v1 inventory are published
-without modifying the previous artifacts. The inventory retains the parent
-ZIP/manifest/inventory hashes, member-change counts, URL-association changes for stable numeric
-MediaWiki IDs (distinguishing RecentChanges-corroborated moves from
-unresolved aliases), parent IDs missing from the fresh
-enumeration, and the observed RecentChanges events. A missing ID is
-**not** unconditionally labeled a deletion; it might instead reflect a
-namespace change, visibility restriction or ambiguous source state.
-RecentChanges continuation is checked, but
-`retentionCoverage: unverified` is mandatory: even a paginated complete
-response cannot prove how far the Wiki retains older changes.
-
-**Current-page source revisions are now recorded, not used to skip
-HTML.** After fetching current pages, the producer sends bounded
-MediaWiki revision queries (up to 40 numeric page IDs per request).
-Where the returned page identity matches, the v1 inventory optionally
-records the latest source revision ID/timestamp, page ID/title, API
-observation window and the earlier HTML fetch time. Missing page IDs,
-unavailable revisions, API failures and title disagreements remain
-explicitly unknown. The private `.wiki-current-revisions.json` work
-file is never published inside the ZIP.
-
-On an update, `currentRevisionComparisons` records changed, unchanged
-or uncomparable source revision IDs by stable page ID, while
-`htmlRefetched: true` and `renderCorrespondence: not-verified` make
-the limit explicit. An unchanged revision does **not** establish that
-rendered HTML stayed unchanged: templates, modules, categories and other
-dependencies may have changed (P2.4). These batched observations occur
-*after* HTML downloads, not atomically with them. The original-upload
-imageinfo and HTTP-validator paths can avoid large asset response bodies,
-but still make API/conditional requests.
-
-**Source-time and coverage audit (P2.3b.4):** New snapshots with
-current-page revision observations include a `sourceTimeCoverage` summary
-in their inventory. It counts missing revision/HTML timing evidence,
-latest revision timestamps later than the earlier HTML fetch, and page
-fetches or revision checks outside the already queried RecentChanges
-window. Updates also count unresolved move/alias associations and
-previously known page IDs absent from fresh enumeration. These counts
-are recomputed by `verify_snapshot`; consumers cannot silently promote
-them into a stronger status. The explicit limits are
-`consistency: not-verified-atomic`,
-`renderDependencies: unverified`, and
-`recentChangesRetention: unverified` (or `not-observed`).
-These are **risk indicators, not source-time correctness guarantees**:
-RecentChanges may omit old activity and closes at the initially requested
-cutoff; the latest revision metadata is checked later than the HTML body.
-Therefore pages remain fully fetched, and no unchanged revision ID
-certifies the previously rendered content. Future dependency-aware
-verification (P2.4) is required before making stronger claims.
-
-**Rendered HTML invalidation audit (P2.4a):** Updated inventories can now
-carry optional `renderInvalidation` evidence, checked again by
-`verify_snapshot`. It counts observed Template/Module/Category changes,
-categorization, new/move/delete index signals, and source-HTML links to
-changed template/module page titles. Those matches are unverified research
-candidates, *not* proven transclusions. Direct, transitive and Scribunto
-dependencies, category membership and RecentChanges retention all remain
-unknown. Even an empty event/candidate list cannot authorize cached HTML.
-Every current page is still fetched and rewritten after fresh discovery.
-The published ZIP/v3 manifest and inventory v1/v2 history contracts remain
-compatible; existing snapshots without this optional field still verify.
-
-**MediaWiki relationship observations (P2.4b):** Each `--update-from`
-also queries `prop=templates|categories` for freshly enumerated current
-page IDs, using bounded batches and complete API continuation. The new
-optional per-member `pageRelationships` evidence records the reported
-transcluded pages and category memberships (namespace and exact API title),
-numeric page identity, API title, query window and SHA-256 for each successful
-API response. An incomplete, malformed, redirected or mismatched API result
-stays explicitly unknown rather than publishing a partial list. The private
-`.wiki-page-relationships.json` work sidecar does not enter the ZIP.
-`pageRelationshipEvidence` records observation coverage; the verifier checks
-member identities, timestamps, list ordering and safe unknown semantics.
-
-The API can report transcluded pages, but these observations are **not**
-a verified direct/transitive render graph. They occur after the HTML crawl;
-Scribunto calls, module invocation, redirects, other namespaces, category
-membership changes during acquisition and missing RecentChanges retention
-can invalidate completeness. The invalidation audit separately lists
-API-observed template/module and category *candidates*, not proof that any
-earlier HTML response depended on those particular source versions.
-Current rendered HTML is still always fetched and rewritten; unchanged
-revision IDs and even complete API pagination never permit a skipped fetch.
-Inventory formats v1/v2, oldids and historical-only associations are unchanged.
-A later history upgrade of a verified update parent keeps its current-page
-relationship records unchanged, while placing the parent's update-only audit
-and accounting under `inheritedCurrentUpdateEvidence`. This is previous
-source evidence, **not** a newly observed dependency graph or an update of
-history-time HTML.
-
-**Rendered HTML reuse safety gate (P2.4c.1):** A refresh publishes an
-optional `captureMetadata.renderReuseGate` assessment for each current
-page, including the source-revision comparison, separately observed
-invalidation risks and unmet source-time, transclusion, category/index,
-representation-validation and offline rewrite-equivalence requirements.
-`verify_snapshot` independently recomputes the entire assessment, and
-rejects invented skip decisions or inconsistent counts. A subsequent
-history-only upgrade retains the exact parent assessment as inherited
-source evidence, not a new freshness assertion. Historical-only pages
-and oldids are excluded from the current HTML decision set.
-
-This is deliberately a **negative gate**: every current page remains
-`refetch-required`; `reuseAuthorized` is `false` and
-`skippedHtmlBodyCount` is `0`. Neither a matching latest revision,
-complete template/category API pagination, nor an empty RecentChanges
-window binds an earlier rendered response to all of its dependencies.
-The archive currently retains rewritten HTML, not replayable original
-response bytes. A future separately verified protocol would need exact
-rendered-response identity, a sufficient change/dependency and source-time
-contract, and proven equivalence of offline link rewriting before skipping
-any HTML response body. This stage does **not** reduce HTML downloads or
-change inventory v1/v2, ZIP, history or v3 provenance formats.
-
-**Rendered response identity preparation (P2.4c.2a):** Freshly retrieved
-HTML now records an optional `renderedResponseVersion` on each current
-page, with its original-response SHA-256, the independently checkable
-rewritten ZIP-member hash, request URL, observed effective URL/status,
-ETag and Last-Modified, acquisition time and configured HTTP request
-variant. A strong ETag is retained for future conditional checks only
-when it came with HTTP 200 at the *same* requested URL. The rewrite
-profile includes fingerprints of the installed producer and path
-sanitizer source, the Python version, and the transformation identity.
-Missing, weak or redirected HTTP metadata never becomes a strong
-validator. The verifier checks these values against published member
-identities, hashes and other acquisition timestamps.
-
-This evidence still does **not** provide a reusable source body: the
-original HTTP HTML is not in the archive, and the current source
-reference inventory deliberately omits ordinary navigation links.
-The original body hash cannot be independently replayed from the ZIP,
-so the evidence is **not** proof of an identical offline rewrite,
-a source-side signature, or permission to skip the next HTML fetch.
-The negative P2.4c.1 gate, full rediscovery and refetch behavior remain
-unchanged. Older v1/v2 inventories and existing history associations
-remain compatible.
-
-**Original HTML replay companion (P2.4c.2b.1):** To preserve complete,
-replayable source HTML alongside a new acquisition, opt in with
-`--source-replay-dir local/data/wiki-source-replay`. This works for fresh
-acquisitions and `--update-from`, including history-enabled updates.
-Each current HTML page is still fetched over HTTP. The option retains
-the exact pre-rewrite HTML privately during crawling and, after the
-main snapshot verifies, publishes a **separate**
-`<archive stem>.source-replay.zip` in the selected directory.
-It does not add source bytes to the existing snapshot ZIP and does not
-change the v3 manifest or inventory v1/v2 structure.
-
-The companion's versioned `index.json` binds the main ZIP, manifest
-and inventory SHA-256s to each original source URL, raw HTML hash,
-rewritten archive member hash, and the complete source-link extraction
-digest/count. `verify_source_replay_bundle(bundle, archive, manifest,
-inventory)` checks the original page bytes and deterministically
-re-runs source link extraction and HTML rewriting against every
-current-page member. Missing, altered, extra or inconsistent members
-fail verification. Historical oldids and v2 historical-only pages are
-**not** claimed to have newly fetched current HTML. The private original
-bodies are not left in successfully cleaned work directories; the
-separate companion is the portable artifact. When resuming an existing
-crawl, request this option from the start: saved pages without their
-original body files cannot be reconstructed from rewritten HTML.
-
-This companion is optional; existing snapshot consumers require only
-the original ZIP, manifest and inventory. A standalone
-`verify_conditional_html_304` helper can validate a synthetic/observed
-HTTP 304 against a fully verified parent and original-byte replay, with
-strict exact URL, profile and strong-ETag requirements. It **never
-authorizes reuse**: the negative render-reuse gate, full current-page
-redownload, fresh discovery and source-time limitations remain unchanged.
-`--from-snapshot --include-history` does not fetch current pages, so
-it cannot create a new replay companion from that operation.
-
-**Conditional HTML transport preflight (P2.4c.2b.2a):** HTTP requests
-now explicitly send `Accept-Encoding: identity`. When real HTTP response
-headers are available, the per-page `renderedResponseVersion=2` records
-the observed `Vary`, content encoding, content language and cache-control
-headers in a separately recomputable `transportVariant` assessment.
-The existing version 1 format remains valid. A missing/old response-header
-record, weak/missing ETag, redirect, wildcard/unrecognized `Vary`, compressed
-body, mismatched content language or `no-store` blocks even a conditional
-transport *probe*.
-
-After independently verifying the parent snapshot and original-byte replay
-companion, `prepare_html_transport_probes(bundle, archive, manifest,
-inventory)` produces a read-only assessment of which exact URLs and
-representation variants could be probed conditionally. The separate
-`verify_html_transport_response(..., request_url=..., result=...)`
-entrypoint validates HTTP 304 response metadata against that parent and
-rejects changed `Vary`, URL, ETag and request-variant evidence. A received
-HTTP 200 always requires fresh-body processing. Even a correctly validated
-304 response yields `reuseAuthorized=false` and
-`fetchBodyRequired=true`: the existing post-crawl invalidation audit and
-unverified source-time/dependency closure do **not** authorize reuse.
-No new page-level conditional network requests are initiated by these APIs.
-Old archives remain readable; only new HTTP-header-observed captures can
-become transport-probe candidates, and the original source-replay companion
-is still required.
-
-**Cross-snapshot rendering/ETag audit (P2.4c.2b.2b.1):**
-`compare_rendered_captures(previous_bundle, previous_archive,
-previous_manifest, previous_inventory, current_bundle, current_archive,
-current_manifest, current_inventory)` independently verifies both
-original-body replay bundles and their complete snapshot artifacts. It
-compares exact current-page URLs and numeric page identity, source response
-hashes, strong ETags, recorded request/response variants and observed
-page revision IDs. The deterministic report detects a **same strong ETag
-for different original HTML bytes**, and rendered-body drift with the
-same page revision. Unknown profiles, changed URL/page identity, missing
-current pages and noncomparable variants are explicitly reported rather
-than considered stable. No historical-only/oldid member is mistaken for
-current HTML. Reports bind both input artifact sets by SHA-256 and record
-whether the later snapshot directly descends from the earlier one.
-
-Run the audit read-only with the companion, snapshot, manifest and
-inventory for the earlier capture followed by the same four artifacts
-for the later capture:
-
-```bash
-python -m tools.audit_render_freshness \
-  OLD.source-replay.zip OLD.zip OLD.json OLD.inventory.json \
-  NEW.source-replay.zip NEW.zip NEW.json NEW.inventory.json
-```
-
-The command validates both capture sets and prints the JSON report to
-standard output; an inconsistent or missing input fails without
-modifying either artifact set.
-
-**Source-rendering authority assessment (P2.4c.2b.2b.2a):** To inspect
-the remaining proof obligations for a snapshot with original HTML
-replay, run:
-
-```bash
-python -m tools.audit_render_authority REPLAY.zip SNAPSHOT.zip MANIFEST.json INVENTORY.json
-```
-
-Add `--previous OLD_REPLAY.zip OLD_SNAPSHOT.zip OLD_MANIFEST.json
-OLD_INVENTORY.json` to incorporate an independently checked earlier
-capture. The report checks archive/replay hashes and transport evidence,
-identifies incomplete revision/relationship observations and lists
-site-specific missing guarantees. A detected same-strong-ETag/different-
-HTML collision is elevated to a source-wide negative signal. The report
-always returns `reuseAuthorized=false`, `skippedHtmlBodyCount=0`.
-See [rendered HTML freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md)
-for the reviewed MediaWiki/HTTP sources and the exact unblock conditions.
-Generic MediaWiki configuration documentation is **not** a verified
-contract for either source deployment. This stage adds no conditional
-page requests or changes to snapshot formats.
-
-This offline comparison can expose *counterexamples* to an ETag freshness
-assumption; matching ETags and HTML in a finite number of captures **cannot
-prove** that the server always invalidates a rendered page after every
-template/module/category change. The report always has
-`reuseAuthorized=false`; it does not modify either snapshot or initiate
-HTTP downloads. A source-side rendering validator contract and bounded
-source-time/change-horizon proof remain prerequisites for any positive
-reuse gate.
-
-### Refresh a history-enabled snapshot (P2.3c.1)
-
-`--update-from` now also accepts a complete history-enabled parent. It
-performs the normal fresh allpages/current-page/asset acquisition, then
-re-enumerates revisions for the **new** current-page set and rebuilds the
-history index. Previously downloaded oldid bytes are reused only when
-their revision ID, parent revision ID and timestamp match a newly
-enumerated revision, and the old page association maps to the new URL
-through a stable numeric MediaWiki page ID. A renamed canonical title,
-a corroborated move or several prior URLs converging onto one identity
-do not by themselves force historical bytes to be downloaded again.
-New revisions are fetched and included; all prior oldids and archived
-page/oldid associations must still be accounted for after remapping.
-
-The new inventory records old and new page URLs with the matching page
-ID, the number of reused and newly enumerated revisions and the full
-parent artifact lineage. History-index metadata is always rebuilt, not
-blindly copied, and current HTML is still refreshed.
-
-### Opt-in retention of missing historical pages (P2.3c.2)
-
-By default, if a historical page ID is missing from fresh MediaWiki
-`allpages` enumeration, `--update-from` still blocks publication rather
-than silently discarding its old HTML or oldids. A *missing* ID is **not
-proof of deletion**; the source page might have moved outside the
-enumerated namespace or become inaccessible.
-
-To explicitly retain such pages, use:
-
-```powershell
-infinity-wiki-snapshot --update-from "path/to/history-parent.zip" --allow-historical-only
-```
-
-This requires a verified history-enabled parent. The resulting archive
-uses **history index formatVersion 2 and inventory formatVersion 2** only
-when historical-only pages exist. All fresh current pages remain in
-`_history/index.json.pages` and are re-enumerated. Formerly current HTML
-is moved to `_history/retired/<pageId>/<URL-hash>.html` and classified as
-`kind: historical-page`, never `current-page`. Each
-`historicalOnlyPages` entry retains a page ID, original URL and member
-path, last known current title, historical canonical title, byte hash,
-original acquisition time and the previously archived oldid associations.
-Their explicit `status: absent-from-current-enumeration` and
-`historyScope: last-archived-only` do **not** claim those pages are
-currently published or that their revisions were freshly enumerated.
-The top-level `historyCoverage:
-current-all-observed-former-last-archived` identifies the mixed
-coverage. A deleted-page log entry, if observed, remains separately
-audited RecentChanges evidence rather than an automatic deletion verdict.
-
-The producer's offline verifier checks all v2 member hashes, original
-page IDs, index/inventory relationships, oldid links, and explicit
-absence mappings. Successive v2 updates preserve earlier retired pages;
-if a retired ID reappears in fresh discovery, publication stops pending
-explicit reinstatement review. The old archive remains immutable.
-
-**Consumer compatibility:** v1 index/inventory snapshots remain unchanged;
-the v2 extension is an explicit opt-in, not a silent schema upgrade.
-At the inspected InfinityDB `dev/v1.1.0` checkout
-`0c853e74abf0956fd5d571920189f72a5db4c01c`, the research audit
-reader at `tools/research/audit_1_0_reference_inputs.py` iterates
-`pages` only, so it will not include `historicalOnlyPages` in oldid
-lookup. Do not ingest v2 snapshots into downstream consumers until they
-are independently reviewed and validated for the extension. The CLI
-prints this warning on v2 publication. No sibling repository is changed
-automatically. Archive-derived work resume is implemented under P2.5;
-see [recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md).
-
-### Resume historical revisions
-
-With `--include-history`, acquisition also writes a separate
-`.wiki-history-checkpoint.json` in the work directory. It records the
-current page, the MediaWiki `rvcontinue` token, revision inventories,
-previously downloaded oldid files and completed pages. Each API batch
-is checkpointed immediately; oldid downloads are checkpointed every 100
-revisions and at each completed page. An interruption can replay a small
-uncommitted batch while reusing valid oldid files already on disk.
-
-Use the normal resume command **with `--include-history`** to continue
-the historical phase:
-
-```powershell
-infinity-wiki-snapshot --site human-sphere --language en --include-history --resume-work "local/work/wiki/HUMAN-SPHERE-history RUN.work"
-```
-
-A failed revision request is retried from its saved phase/token without
-refetching earlier completed revision lists. History checkpoints validate
-the exact current-page set and recorded file sizes; a mismatched or corrupt
-checkpoint blocks publication. Even if current-page acquisition is complete,
-history failures or interruptions do not publish a ZIP or manifest. Both
-checkpoint files are private work metadata, excluded from archives.
-
-The current `--retry-failed-only` switch applies to the current-page crawl
-checkpoint; history resumes automatically under `--include-history`.
-Snapshot-derived history upgrades are supported as described above; resuming
-an *interrupted archive-derived* upgrade remains planned in `docs/TODO.md`.
-
-
-MediaWiki `srcset` candidates (including `<picture><source>`) are downloaded
-and rewritten to paths relative to the containing HTML page, including
-pages within subdirectories. For Human Sphere, recognized MediaWiki
-`/images/thumb/...` URLs also enqueue the corresponding original upload
-when available; a source-side HTTP 404 remains explicitly classified as an
-ignored discovered URL. Asset downloads preserve the response bytes exactly,
-but HTML challenges and invalid signatures for common images, archives and
-documents are rejected instead of being published as binary files. Metadata
-links such as `rel="canonical"` and `rel="license"` remain HTML page links
-rather than being downloaded as assets; stylesheets/preload resources remain
-assets. Resuming an incomplete crawl re-fetches invalid existing assets. MediaWiki `File:` and
-`Image:` URLs are treated as HTML description pages even when their titles
-have image-file extensions; the actual uploads remain binary assets.
-Likewise, MediaWiki source pages such as `Module:Infobox/styles.css`
-and discussion pages such as `Module_talk:Infobox/styles.css` are saved as
-HTML (with `.html` mirror suffixes), not as stylesheet assets. This includes
-corresponding talk namespaces for supported MediaWiki namespaces. Genuine CSS
-resources under `resources/` or `load.php` remain assets.
-During a crawl, the first ten
-failures and every hundredth subsequent failure are printed immediately to
-stderr, so operators can diagnose problems without completing the crawl.
-
-Equivalent MediaWiki URLs (for example, an encoded `%2C` and a literal
-comma in a page title) are canonicalized before scheduling downloads. This
-avoids treating alternate URL spellings for one page as filename collisions,
-while leaving distinct page-title identities separate.
-
-New archive member paths are Windows/macOS/Linux-portable regardless of the
-crawl host. For Human Sphere, non-ASCII names and HTML page titles with
-nonstandard capitalization receive a stable `__u_<hash>` source-identity
-suffix. This keeps `Aibot` distinct from `Aibōt`, `Haetae` distinct
-from `HaeTae`, and MediaWiki file-description titles ending in `.JPG`
-distinct from those ending in `.jpg`, while preserving conventional ASCII
-page filenames and already mirrored asset paths for efficient resumes. Other unsafe filenames,
-remaining normalization collisions, and file/directory conflicts fail before
-publication. Existing ZIPs are immutable and **not**
-repaired in place: produce a new snapshot and matching manifest if you need
-the enhanced image coverage or portable member validation.
-
-## Snapshot inventory (format v1)
-
-Every successful acquisition now additionally writes a separate immutable
-`<archive stem>.inventory.json` beneath the selected manifest directory's
-`inventories/` subdirectory. It records the site, language, history mode,
-original root URL, snapshot acquisition time, exact archive and logical-content
-hashes, and a sorted record for **every** ZIP member (path, byte size and
-SHA-256). Current-page entries record known source URLs and page titles;
-historical oldids record oldid, parent revision, revision timestamp and
-associated source pages. Generated history indexes are identified separately.
-Ignored optional URLs are retained as evidence. `parent: null` reserves a
-lineage field for future archive-derived snapshots.
-
-The inventory distinguishes **offline-rewritten current HTML** from downloaded
-assets, rendered historical revisions and generated indexes. The original
-source response body is not embedded in the ZIP; its SHA-256 is retained
-separately from the rewritten member SHA-256 when captured. Individual files
-without established source identities remain `unknown`, not inferred from
-filenames. Inventories are excluded from ZIPs and never overwrite a previous
-inventory.
-
-### Source identity and relationships
-
-A new crawl records source-page observations before rewriting links, in
-private `.wiki-page-evidence/` files inside its work directory. The inventory
-retains the original request URL and page title independently from the offline
-mirror path, and records numeric MediaWiki page IDs when the `allpages` API
-supplies them. An HTML `wgArticleId` value is an **independent hint**;
-disagreements with an API ID are explicitly flagged rather than resolved by
-guessing. Legacy work without this evidence is marked `not-captured`.
-
-When an HTTP response redirects, its actual final URL and status are recorded
-where available, without silently merging two source identities. Canonical
-`<link>` declarations and HTML meta-refresh targets are retained separately
-as **unverified claims**, including their original query-bearing URLs.
-
-Original HTML references to images, stylesheets, scripts and MediaWiki
-`Template:` / `Module:` / `File:` / `Category:` pages are recorded with their
-evidence type and whether their target was archived, ignored or unresolved.
-Derived original-upload candidates are distinguished from directly observed
-links. A navigation link to a template or module **does not establish that
-it was transcluded**: actual template/module rendering dependencies remain
-explicitly unknown. HTTP response *headers* other than the observed final
-URL/status are not yet retained. This information enables future incremental
-checks without claiming dependency completeness.
-
-The inventory is producer-side metadata for future incremental acquisition,
-not a replacement for the v3 provenance manifest. ZIP and provenance remain
-the same consumer contract; P1.4 in `docs/TODO.md` covers legacy indexing.
-
-### Verify a completed snapshot before reuse
-
-The P1.3 offline verification boundary requires all three published artifacts:
-the ZIP, its matching v3 provenance JSON and its v1 inventory sidecar.
-From an installed Python environment:
+Verification is **offline and read-only** and requires all three published
+artifacts. From the installed Python environment:
 
 ```python
 from pathlib import Path
 from infinity_wiki_acquisition.snapshot_verification import verify_snapshot
 
-verified_inventory = verify_snapshot(
-    Path("local/data/wiki/WIKI-en 20261115-120000.zip"),
-    Path("local/data/manifests/snapshots/WIKI-en 20261115-120000.json"),
-    Path("local/data/manifests/snapshots/inventories/WIKI-en 20261115-120000.inventory.json"),
+snapshot = verify_snapshot(
+    Path("local/data/wiki/WIKI-en 20261115-180000.zip"),
+    Path("local/data/manifests/snapshots/WIKI-en 20261115-180000.json"),
+    Path("local/data/manifests/snapshots/inventories/WIKI-en 20261115-180000.inventory.json"),
 )
+print(snapshot["site"], snapshot["language"], snapshot["history"])
 ```
 
-The call returns the checked inventory or raises `SnapshotVerificationError`.
-It verifies the exact ZIP and logical-content hashes, streams every file to
-validate ZIP integrity/size/SHA-256, rejects unsafe or colliding member paths,
-and checks inventory, provenance, site, language, history and recorded revision
-relationships for contradictions. Verification never extracts or edits input
-files and needs no work directory or network access. Unknown source evidence
-that was never captured is allowed; contradictory recorded evidence is not.
-Older snapshots without inventories need conservative indexing before this
-API can certify reuse. Neither checksums nor sidecars authenticate who supplied
-an otherwise self-consistent set of files; establish artifact trust separately.
+`verify_snapshot` checks exact archive and logical-content hashes, ZIP
+integrity, safe/portable member names, member sizes and SHA-256s, site and
+history identity, recorded source evidence, revisions, and parent
+relationships. It returns the validated inventory or raises
+`SnapshotVerificationError`; it neither fetches from the wiki nor extracts
+files. The verifier checks recorded consistency—it does **not** authenticate
+the original publisher or guarantee source freshness.
 
-### Index a completed legacy snapshot (P1.4)
+To validate an optional original-source companion:
 
-For a previously completed Wiki/Human Sphere snapshot that predates inventories,
-use the explicit **offline** command with the original ZIP and matching **v3**
-provenance JSON:
+```python
+from pathlib import Path
+from infinity_wiki_acquisition.source_replay import verify_source_replay_bundle
+
+report = verify_source_replay_bundle(
+    Path("local/data/wiki-source-replay/WIKI-en 20261115-180000.source-replay.zip"),
+    Path("local/data/wiki/WIKI-en 20261115-180000.zip"),
+    Path("local/data/manifests/snapshots/WIKI-en 20261115-180000.json"),
+    Path("local/data/manifests/snapshots/inventories/WIKI-en 20261115-180000.inventory.json"),
+)
+print(len(report["pages"]))
+```
+
+This independently replays original current-page link extraction and HTML
+rewriting and compares the results with the verified snapshot bytes.
+
+## 8. Source evidence and reuse limitations
+
+The downloader records source URLs, MediaWiki numeric IDs and title hints,
+redirect/effective URLs, source-response hashes, optional latest revision
+IDs, template/category observations, HTTP/asset versions, and ignored or
+unresolved links. An HTML `Template:` or `Module:` link is **not** by itself
+proof of a rendering dependency. Original HTTP body bytes are retained
+only in an optional replay companion, not the main snapshot ZIP.
+
+Current-page updates query RecentChanges and check source-time coverage,
+but neither allpages enumeration nor fully paginated API responses prove
+that a source has retained all earlier activity. Template/module/category
+changes, asynchronous rendering and intermediary caches prevent an
+unverified assumption that an unchanged page revision or strong ETag means
+the rendered HTML is still current.
+
+**Current policy:** the render-reuse gate always keeps
+`reuseAuthorized=false` and `skippedHtmlBodyCount=0` for current-page
+refreshes. Conditional asset reuse does **not** imply conditional HTML reuse.
+A verified HTTP `304` for a rendered page, or a clean offline ETag comparison,
+does not grant permission to skip the next page download.
+
+The companion ZIP supports separate read-only differential ETag and source
+authority audits described below. A positive HTML reuse gate remains
+blocked pending verified site-specific render/source-time guarantees. See
+[rendered freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md).
+
+## 9. Additional commands and audit tools
+
+### Legacy inventory indexing
+
+For completed **pre-inventory** snapshots with an existing matching **v3**
+provenance manifest:
 
 ```powershell
-infinity-wiki-index-legacy "local/data/wiki/WIKI-en 20261015-110000.zip" "local/data/manifests/snapshots/WIKI-en 20261015-110000.json"
+infinity-wiki-index-legacy "path/to/old-snapshot.zip" "path/to/old-manifest.json"
 ```
 
-The command creates `<archive stem>.inventory.json` in the manifest
-directory's `inventories/` subdirectory; `--inventory-dir <directory>`
-selects another sidecar directory. The same entry point is available as
-`python -m infinity_wiki_acquisition.legacy_snapshot_index`. Indexing
-validates the exact ZIP hash, logical-content hash and member integrity,
-then checks the generated inventory with `verify_snapshot` **before**
-publishing it. Nothing is extracted or downloaded. ZIPs and manifests are
-never rewritten, and existing inventories or staging files are never replaced.
+| Argument | Meaning |
+| --- | --- |
+| `archive` (required positional) | Completed source ZIP |
+| `manifest` (required positional) | Matching v3 provenance JSON |
+| `--inventory-dir DIRECTORY` | Optional destination; defaults to `<manifest directory>/inventories` |
+| `-h`, `--help` | Show command help |
 
-Without a trustworthy original source mapping, a member name such as
-`Main_Page.html`, `File:Something.jpg.html` or `images/photo.png`
-**cannot** establish a page URL or asset origin. Those members remain
-`unknown`, even if their contents resemble HTML or images. For history
-archives, the explicitly recorded `_history/index.json` supplies current-page
-URLs, titles, and oldid revision references. Page IDs, original HTTP body
-hashes, redirects, referenced resources and unobserved response headers
-remain unknown. The sidecar records `captureMetadata.legacyIndexed: true`
-and `ignoredUrlsAvailable: false`; an empty `ignoredUrls` list in a
-reconstructed inventory does not prove no URLs were ignored.
+Indexing is fully offline, produces a new inventory **without** replacing or
+modifying the ZIP/manifest, and verifies the resulting triple before
+publication. Missing original source URLs, page IDs and other unobserved
+metadata stay `unknown`. A legacy-reconstructed inventory may therefore
+verify file integrity yet still be unsuitable for a source-identity-sensitive
+history upgrade or current update. Earlier provenance versions require a
+separate migration, not this command.
 
-Indexing requires v3 Wiki provenance, recognized site/language and an
-internally consistent, portable archive with a matching history mode.
-Earlier manifest versions, contradictory history indexes, missing members,
-unsafe paths and damaged ZIPs are rejected rather than silently upgraded.
-This creates verifiable *file evidence*, not proof that an old crawl covered
-every source URL or that its contents remain current.
+The entry point is also available as:
 
+```powershell
+python -m infinity_wiki_acquisition.legacy_snapshot_index --help
+```
 
-## Consumer contract
+### Read-only rendered-HTML audits
 
-A complete acquisition exports an immutable `WIKI-en ...zip`,
-`WIKI-es ...zip` or `HUMAN-SPHERE ...zip` and a matching v3
-`InfinityDB snapshot provenance` JSON manifest. Copy the ZIP and JSON
-to the consumer machine. Exact archive SHA-256 and logical
-`snapshot.contentSha256` must match; the producer-relative path in the
-manifest is informational. InfinityDB's snapshot-provenance reader verifies
-the pair offline. Source ZIP members remain source evidence, not
-authoritative current gameplay rules.
+These tools are intended for a **repository checkout** with verified
+original-source replay companions. They do not initiate a crawl, modify
+snapshots or authorize HTML download reuse.
 
-Manifest publication now stages a new canonical JSON document exclusively
-and installs it with a same-directory no-replace hard link. An existing
-manifest is accepted only if its bytes are identical; different provenance,
-symlink targets or stale `.json.tmp` staging fail instead of overwriting
-another crawl's evidence. Inspect interrupted staging before cleanup and
-use a filesystem supporting hard links. Source archive format, site and
-language selection, legacy CLI destinations and resume-work behavior are
-unchanged.
+Compare two completed captures (all eight artifact paths are positional,
+with the earlier capture first):
 
-Each acquisition requires a newly created manifest, even if a competing crawl
-publishes identical bytes, so rollback cannot delete another run's evidence.
-Direct `write_snapshot_manifest` calls remain idempotent by default. Equality
-uses exact UTF-8 bytes, including line endings. Copying an archive to another
-local layout does not require rewriting its manifest: the consumer explicitly
-selects the archive and never resolves the producer's recorded path.
+```powershell
+python -m tools.audit_render_freshness `
+  "OLD-REPLAY.zip" "OLD.zip" "OLD.json" "OLD.inventory.json" `
+  "NEW-REPLAY.zip" "NEW.zip" "NEW.json" "NEW.inventory.json"
+```
 
-The Python provenance contract is copied from InfinityDB's current
-`snapshot_provenance` implementation at extraction time, so conformance
-is established against the consuming InfinityDB version rather than
-requiring an `infinity_db` runtime import.
+Assess a capture's transport/source-authority gaps, optionally against an
+earlier capture:
 
-This project was extracted from the InfinityDB Wiki/Human Sphere downloader
-under restructuring phase P5.4. The standalone test suite and cross-platform
-GitHub Actions verify the packaged acquisition behavior. InfinityDB reads the
-resulting archive and manifest offline; it does not import or install this
-package for ordinary builds or serving. The original in-tree downloader remains
-until its separate consumer/documentation cutover is complete.
+```powershell
+python -m tools.audit_render_authority `
+  "NEW-REPLAY.zip" "NEW.zip" "NEW.json" "NEW.inventory.json" `
+  --previous "OLD-REPLAY.zip" "OLD.zip" "OLD.json" "OLD.inventory.json"
+```
+
+| Audit option | Meaning |
+| --- | --- |
+| `--previous OLD_REPLAY OLD_ZIP OLD_MANIFEST OLD_INVENTORY` | Optional four-file earlier verified capture for `audit_render_authority`. Omit it to assess the current capture alone. |
+| `-h`, `--help` | Show the selected audit command's arguments. |
+
+A detected identical strong ETag for **different original HTML bytes** is
+negative evidence against the source validator; no finite number of
+matching captures proves future rendered freshness. The authority report
+is explicitly non-authorizing.
+
+See [rendered freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md)
+and [development and verification details](docs/DEVELOPMENT.md).
+
+## 10. Troubleshooting, compatibility and further documentation
+
+| Symptom | What to check |
+| --- | --- |
+| A required URL or revision failed | Check the printed error and preserved `*.work` path. Fix the source/connection issue, then resume with the same mode and options. A failed required source prevents publication. |
+| `--retry-failed-only` is refused | It requires `--resume-work` on an **ordinary** crawl whose full discovery checkpoint is complete. Use normal resume otherwise. |
+| Parent upgrade/update is rejected before fetching | Pass the actual ZIP, matching v3 manifest and matching inventory; verify the site/language and content identities. Reconstructed legacy inventories may lack required source metadata. |
+| Resume refuses a parent or option mismatch | Use the **exact** parent triple and original mode/options. Do not copy a work directory to a different parent run or invent missing checkpoint evidence. |
+| Missing historical page IDs | Do not infer deletion. For history-enabled updates, optionally choose `--allow-historical-only`, understanding the v2 downstream compatibility requirement. |
+| Existing output or staging file blocks publication | Publication deliberately avoids overwrites. Inspect competing files and stale temporary evidence before choosing a new output directory or retrying; do not bulk-delete ignored source material. |
+| A downloaded asset looks like HTML | HTML challenges, invalid binary signatures and MediaWiki description pages are classified separately. Required invalid resources stop publication; genuine HTML pages are not silently published as binary assets. |
+| An archive verifies but content is not current | Snapshot verification proves recorded artifact consistency, **not** source freshness, correct gameplay interpretation, or authoritative rules coverage. |
+
+### Consumer boundary
+
+The handoff to InfinityDB is a portable, complete ZIP with matching
+provenance JSON and inventory. Transfer or select the exact artifacts;
+the producer's own path recorded in provenance is informational and need not
+be recreated on the consumer machine. The consumer must verify the files
+against **its actual supported version** before ingestion. In particular,
+v2 historical-only records are an explicit compatibility opt-in.
+
+This standalone producer does not depend on the InfinityDB runtime. It does
+not automatically edit, import into, build, deploy or publish the downstream
+application. Source material is research evidence, not a player-facing rule
+authority.
+
+### Further documentation
+
+- [Development and integration](docs/DEVELOPMENT.md) — source contracts,
+  verification design, identity rules, asset/revision evidence and testing.
+- [Acquisition roadmap](docs/TODO.md) — completed phases and open research
+  limitations.
+- [Archive recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md) —
+  recovery commands, checkpoint guarantees and synthetic acceptance matrix.
+- [Rendered-HTML freshness authority](docs/RENDER_FRESHNESS_AUTHORITY.md) —
+  HTTP/MediaWiki evidence, negative gate and external conditions.
+- [Changelog](CHANGELOG.md) — operator-visible implementation history.
+- [Agent instructions](AGENTS.md) — repository-specific contribution rules.
+
+This repository contains acquisition code, not mirrored third-party source
+documents or media. Keep downloaded material outside Git and respect its
+separate copyright and usage terms.
