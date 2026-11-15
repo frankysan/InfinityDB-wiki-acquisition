@@ -146,6 +146,7 @@ def upgrade_snapshot_with_history(
     expected_site: str | None = None,
     expected_language: str | None = None,
     progress: Any = None,
+    resume_work: Path | None = None,
 ) -> SnapshotUpgradeResult:
     """Create a separate, fully verified history snapshot from a checked parent.
 
@@ -175,10 +176,24 @@ def upgrade_snapshot_with_history(
             )
     root_url = site.root_urls[language]
 
+    from infinity_wiki_acquisition.archive_run import (
+        open_archive_run, restored_parent_oldid_reuse,
+        record_parent_oldid_reuse,
+    )
+
     started = now or datetime.now().astimezone()
-    work = cli.create_wiki_work_directory(
-        work_root, site=site, language=language, now=started,
-        include_history=True,
+    work = (
+        resume_work
+        if resume_work is not None else cli.create_wiki_work_directory(
+            work_root, site=site, language=language, now=started,
+            include_history=True,
+        )
+    )
+    open_archive_run(
+        work, source_archive, source_manifest, source_inventory,
+        mode="history-upgrade", site=site_key, language=language,
+        options={"includeHistory": True},
+        resume=resume_work is not None, started_at=started,
     )
     new_archive: Path | None = None
     new_manifest: Path | None = None
@@ -188,7 +203,9 @@ def upgrade_snapshot_with_history(
         # against the newly enumerated API identity *before* each reuse.
         members: list[Path] = []
         parent_revisions = _parent_revision_records(parent)
-        reused_oldids: set[int] = set()
+        reused_oldids: set[int] = restored_parent_oldid_reuse(
+            work, parent_revisions,
+        )
         with zipfile.ZipFile(source_archive) as source:
             for member in parent["members"]:
                 if member["kind"] not in {"current-page", "asset"}:
@@ -196,8 +213,17 @@ def upgrade_snapshot_with_history(
                 relative = member["path"]
                 target = work.joinpath(*relative.split("/"))
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with source.open(relative) as contents, target.open("xb") as output:
-                    shutil.copyfileobj(contents, output)
+                if target.exists() or target.is_symlink():
+                    if (resume_work is None or target.is_symlink()
+                            or not target.is_file()
+                            or target.stat().st_size != member["size"]
+                            or sha256_file(target) != member["sha256"]):
+                        raise ValueError(
+                            f"Existing parent work member differs from verified archive: {relative}"
+                        )
+                else:
+                    with source.open(relative) as contents, target.open("xb") as output:
+                        shutil.copyfileobj(contents, output)
                 members.append(target)
 
             def reuse_oldid(page: Any, title: str, oldid: int,
@@ -220,6 +246,7 @@ def upgrade_snapshot_with_history(
                         hashlib.sha256(payload).hexdigest() != record["sha256"]):
                     raise ValueError(f"Source oldid bytes changed: {oldid}")
                 reused_oldids.add(oldid)
+                record_parent_oldid_reuse(work, oldid, record["sha256"])
                 return payload
 
             if progress is None:

@@ -2115,8 +2115,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resume-work",
         type=Path,
         help=(
-            "Reuse a preserved wiki work directory from an incomplete run; existing "
-            "oldid files are not downloaded again"
+            "Resume a preserved ordinary crawl or archive-derived history "
+            "upgrade. For --from-snapshot, the work receipt must match the "
+            "exact parent archive/manifest/inventory before any network access."
         ),
     )
     parser.add_argument(
@@ -2224,10 +2225,10 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        if not args.include_history or args.retry_failed_only or args.resume_work is not None:
+        if not args.include_history or args.retry_failed_only:
             print(
                 "ERROR: --from-snapshot requires --include-history and cannot "
-                "be combined with --retry-failed-only/--resume-work",
+                "be combined with --retry-failed-only",
                 file=sys.stderr,
             )
             return 1
@@ -2250,6 +2251,8 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_directory=args.manifest_dir,
                 work_root=args.work_root,
                 expected_site=args.site, expected_language=args.language,
+                **({"resume_work": args.resume_work}
+                   if args.resume_work is not None else {}),
             )
         except SnapshotUpgradeIncomplete as exc:
             print(f"ERROR: {exc}", file=sys.stderr)

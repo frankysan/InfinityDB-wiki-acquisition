@@ -77,6 +77,27 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P2.5a history-upgrade resume is explicitly enabled for
+  `--from-snapshot --include-history --resume-work <work>` and the
+  corresponding `upgrade_snapshot_with_history(..., resume_work=...)`.
+  Before fetching any revision, verify the entire parent triple again
+  and validate a private `.wiki-archive-run.json` receipt (exact
+  ZIP/manifest/inventory hashes, source, language, operation and options).
+  The receipt is created before first copying parent content and never
+  enters the published archive. On resume, existing parent page/asset files
+  are checked by actual SHA-256 and size and are not overwritten. The
+  existing page-by-page history checkpoint resumes previously committed
+  oldid enumeration/downloads, including completed pages and uncommitted
+  files. A private append-only oldid reuse log records only actual
+  parent oldid copies; on resume, logged oldids count only when their
+  saved bytes still match the fully verified parent. Interrupted logging
+  with no corresponding file is not a successful reuse. This preserves
+  `reusedRevisionCount` across resumed history parents without claiming
+  new network downloads as reused. History identity/association
+  verification, immutable parent lineage and all-or-nothing publication
+  remain unchanged. New current-HTML refresh resume requires separate
+  RecentChanges/asset-version evidence checkpointing in P2.5b; history
+  resume does not imply that `--update-from --resume-work` works.
 - For the P2.1 non-history-to-history upgrade, accept only an independently
   verified ZIP/v3 manifest/v1 inventory triple with all original members
   explicitly classified as current pages or assets. Work in a newly created

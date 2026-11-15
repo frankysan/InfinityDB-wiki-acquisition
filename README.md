@@ -147,9 +147,31 @@ source/coverage semantics; the command does not mislabel a partial history as
 complete.
 
 On a required revision failure, no ZIP/manifest/inventory is published.
-The staging directory and history checkpoint are preserved for inspection,
-but `--resume-work` and `--retry-failed-only` cannot be combined with
-`--from-snapshot` yet; archive-derived resume is scheduled for P2.5.
+The staging directory and history checkpoint are preserved for inspection.
+
+**Resume an interrupted archive-derived history upgrade (P2.5a):**
+Reuse the exact verified parent ZIP, manifest and inventory and pass the
+preserved work directory from the failed run:
+
+```powershell
+infinity-wiki-snapshot --from-snapshot "local/data/wiki/WIKI-en 20261114-120000.zip" --include-history --resume-work "local/work/wiki/WIKI-en-history 20261115-160000.work"
+```
+
+The private `.wiki-archive-run.json` receipt binds the exact parent
+ZIP/manifest/inventory SHA-256s, site, language, mode and options **before**
+any network fetches on resume. Resumed work must contain that receipt.
+Existing copied parent members are SHA-256 checked against the verified
+parent; altered or missing checkpointed oldid files fail closed rather
+than silently publishing. The history checkpoint resumes pagination or
+the next unfinished oldid, while a private parent-oldid reuse log preserves
+the original transfer accounting if a history parent was interrupted.
+An already saved oldid is not fetched twice. Success deletes staging as
+usual; failure preserves it. The receipt and accounting log are private,
+never members of the new ZIP. Parent files are never modified.
+`--retry-failed-only` remains reserved for ordinary crawl checkpoints,
+not archive-derived history upgrades. `--update-from --resume-work`
+is **not yet supported**; its separate current-content and RecentChanges
+recovery contract remains open in P2.5b.
 
 ### Refresh a completed current-content snapshot (P2.3a–b)
 

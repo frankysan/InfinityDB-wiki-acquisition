@@ -184,7 +184,6 @@ def test_upgrade_cli_infers_parent_site_language_and_explicit_paths(
 @pytest.mark.parametrize("args,error", [
     (["--from-snapshot", "missing.zip"], "requires --include-history"),
     (["--from-snapshot", "missing.zip", "--include-history", "--retry-failed-only"], "cannot be combined"),
-    (["--from-snapshot", "missing.zip", "--include-history", "--resume-work", "work"], "cannot be combined"),
     (["--from-manifest", "missing.json"], "requires --from-snapshot"),
     (["--from-inventory", "missing.json"], "requires --from-snapshot"),
 ])

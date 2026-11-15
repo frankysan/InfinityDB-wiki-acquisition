@@ -47,6 +47,14 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.5a resumable history-only archive upgrades through
+  `--from-snapshot --include-history --resume-work`. Private receipts bind
+  interrupted work to the exact verified parent ZIP/manifest/inventory,
+  site/language and operation. Previously copied current members are hash-
+  checked rather than overwritten, and history checkpoints resume oldid
+  pagination/downloads with parent oldid reuse accounting preserved.
+  Incorrect parents, corrupted work or incomplete evidence fail before
+  publication. Current-content `--update-from` resume remains planned.
 - **Acquisition:** Added P2.4c.2b.2b.2a non-authorizing
   source-rendering authority assessments backed by independently verified
   snapshot/replay artifacts and optional differential comparison. A confirmed
