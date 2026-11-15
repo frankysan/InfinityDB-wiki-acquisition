@@ -135,6 +135,22 @@ Agents start with [AGENTS.md](../AGENTS.md).
   leave work inspectable with no resulting archive, manifest or inventory.
   Parent snapshots are never modified. This is resumability, not a
   dependency-fresh HTML/atomic source-time guarantee.
+- P2.5c operator acceptance is recorded in
+  `docs/ARCHIVE_RECOVERY_ACCEPTANCE.md`. The consolidated synthetic
+  CLI tests interrupt both archive-derived modes at publication, verify
+  that the exact preserved `*.work` path is printed, and resume without
+  re-requesting fully checkpointed work. Both final ZIP/v3
+  manifest/v1-v2 inventory sets independently verify, including exact
+  parent SHA-256 lineage and unchanged parent bytes; private work
+  receipts and evidence never enter a snapshot ZIP. The post-staging
+  exception handler attaches a Python 3.11 exception note containing
+  the recoverable work path for errors/interrupts that are not already
+  `SnapshotUpdateIncomplete` or `SnapshotUpgradeIncomplete`; the
+  archive-derived CLI handlers print the note alongside the reason.
+  If an error occurs **before** a valid work directory exists, no
+  recoverable path is asserted. Only committed checkpoint work is
+  protected against duplicate network requests; an interrupted batch
+  may be replayed, and no live source consistency is claimed.
 - For the P2.1 non-history-to-history upgrade, accept only an independently
   verified ZIP/v3 manifest/v1 inventory triple with all original members
   explicitly classified as current pages or assets. Work in a newly created
@@ -508,9 +524,8 @@ Agents start with [AGENTS.md](../AGENTS.md).
   The next positive cutover is blocked on actual deployment-specific
   evidence (site/server/skin/extension/proxy implementation, validator
   binding, jobs/purges/retention, and source-time guarantees). Until that
-  exists, keep P2.4c open and advance independently actionable P2.5
-  resumability; never replace the HTTP full-fetch path with unverified
-  conditional 304 reuse.
+  exists, keep P2.4c open and use the independently validated P2.5
+  resumability without enabling unverified conditional HTML reuse.
 
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
@@ -535,7 +550,7 @@ Agents start with [AGENTS.md](../AGENTS.md).
   If an earlier page's numeric ID cannot be found in fresh discovery,
   refuse publication by default: absence is not verified deletion.
   Opt-in historical-only preservation is separately versioned (P2.3c.2).
-  Failed staging remains available; restarting it is deferred to P2.5.
+  Failed staging remains available for parent-bound resume using P2.5b.
 - P2.3c.2 introduces **only for explicit `--allow-historical-only`**
   a new history index `formatVersion: 2` and inventory `formatVersion: 2`
   when missing historical page IDs must be retained. The existing v1
@@ -568,7 +583,7 @@ Agents start with [AGENTS.md](../AGENTS.md).
   producer v2 verification does *not* grant downstream acceptance.
   Keep v2 opt-in with a CLI compatibility warning until separately
   authorized, pinned consumer tests cover historical-only references.
-  Archive-derived resume remains P2.5.
+  Archive-derived recovery is implemented and independently covered by P2.5.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

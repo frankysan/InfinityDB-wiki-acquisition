@@ -47,6 +47,14 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Completed P2.5c operator acceptance of both
+  `--from-snapshot --include-history --resume-work` and
+  `--update-from --resume-work`: synthetic end-to-end CLI recovery
+  proves independent parent lineage, preservation of ZIP/manifest/inventory
+  hashes, exclusion of private work evidence from ZIP members and no
+  duplicate requests for checkpointed work. Recoverable work paths are now
+  displayed after generic post-staging publication or verification failures
+  and interrupts. Added a concise recovery guide and explicit limitations.
 - **Acquisition:** Added P2.5b archive-derived current-refresh resume with
   `--update-from --resume-work`. Parent-bound private evidence keeps the
   exact RecentChanges window, allpages continuation and crawl queue,

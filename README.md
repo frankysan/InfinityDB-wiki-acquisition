@@ -170,7 +170,9 @@ usual; failure preserves it. The receipt and accounting log are private,
 never members of the new ZIP. Parent files are never modified.
 `--retry-failed-only` remains reserved for ordinary crawl checkpoints,
 not archive-derived history upgrades. Archive-derived current refreshes
-also support `--resume-work` (see P2.5b below).
+also support `--resume-work` (see P2.5b below). For complete
+recovery commands and acceptance limits, see
+[archive-derived recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md).
 
 ### Refresh a completed current-content snapshot (P2.3a–b)
 
@@ -223,7 +225,13 @@ counts are restored from per-asset evidence bound to saved file bytes.
 The immutable parent and existing ZIP/v3 manifest/v1-v2 inventory
 contracts are unchanged; raw resume receipts remain private. No HTML
 response-body skipping or stronger rendered-freshness claim is enabled.
-With no `--resume-work`, updates behave as before.
+With no `--resume-work`, updates behave as before. Generic post-staging
+verification or publication errors now also print the exact preserved work
+path, not just the exception text. Only checkpoint-committed requests are
+guaranteed not to repeat; interrupted in-flight batches may run again.
+See [archive-derived recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md)
+for both operation modes, explicit parent paths and an offline acceptance
+matrix.
 
 **Page HTML remains a conservative full refresh; binary asset bodies
 can be reused with fresh version evidence.** The producer first verifies
@@ -588,7 +596,8 @@ reader at `tools/research/audit_1_0_reference_inputs.py` iterates
 lookup. Do not ingest v2 snapshots into downstream consumers until they
 are independently reviewed and validated for the extension. The CLI
 prints this warning on v2 publication. No sibling repository is changed
-automatically. Archive-derived work resume remains P2.5.
+automatically. Archive-derived work resume is implemented under P2.5;
+see [recovery acceptance](docs/ARCHIVE_RECOVERY_ACCEPTANCE.md).
 
 ### Resume historical revisions
 

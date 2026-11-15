@@ -121,5 +121,5 @@ conditions that a user can satisfy by manually selecting an unchecked
 
 If this source-specific evidence remains unavailable, P2.4c.2b.2b.2 is
 **blocked**, and the correct operational policy is to keep full current-page
-HTML fetching and pursue P2.5 resumability / efficiency independently.
+HTML fetching and use the completed P2.5 resumability workflow independently.
 A verified HTTP 304 never upgrades source freshness by itself.

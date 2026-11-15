@@ -2137,6 +2137,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _print_recovery_notes(exc: BaseException) -> None:
+    """Surface preserved work paths attached during archive-derived failures."""
+    for note in getattr(exc, "__notes__", ()):
+        if note.startswith("Preserved wiki work -> "):
+            print(note, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.update_from is not None:
@@ -2178,14 +2185,16 @@ def main(argv: list[str] | None = None) -> int:
             for failure in exc.failures:
                 print(f"  {failure.url}: {failure.error}", file=sys.stderr)
             return 1
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as exc:
             print(
                 "Snapshot update interrupted; preserved work for inspection.",
                 file=sys.stderr,
             )
+            _print_recovery_notes(exc)
             return 130
         except (OSError, ValueError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
+            _print_recovery_notes(exc)
             return 1
         print(
             f"Updated Wiki snapshot (pages refetched; assets verified or downloaded): "
@@ -2260,11 +2269,13 @@ def main(argv: list[str] | None = None) -> int:
             for failure in exc.failures:
                 print(f"  {failure.url}: {failure.error}", file=sys.stderr)
             return 1
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as exc:
             print("History upgrade interrupted; preserved work for inspection.", file=sys.stderr)
+            _print_recovery_notes(exc)
             return 130
         except (OSError, ValueError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
+            _print_recovery_notes(exc)
             return 1
         print(
             f"Reused {upgraded.reused_members} parent members "

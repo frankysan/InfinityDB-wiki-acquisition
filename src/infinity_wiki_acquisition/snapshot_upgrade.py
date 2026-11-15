@@ -388,15 +388,17 @@ def upgrade_snapshot_with_history(
             inventory_document, new_archive, new_manifest,
             manifest_directory / "inventories",
         )
-    except BaseException:
+    except BaseException as exc:
+        if not isinstance(exc, SnapshotUpgradeIncomplete):
+            exc.add_note(f"Preserved wiki work -> {work}")
         if new_inventory is not None:
             new_inventory.unlink(missing_ok=True)
         if new_manifest is not None:
             new_manifest.unlink(missing_ok=True)
         if new_archive is not None:
             new_archive.unlink(missing_ok=True)
-        # A failed run retains its work and history checkpoint. Independent
-        # archive-derived resume/reuse is planned for P2.5.
+        # The private run receipt and history checkpoint are deliberately
+        # retained for a parent-bound --resume-work recovery.
         raise
 
     try:

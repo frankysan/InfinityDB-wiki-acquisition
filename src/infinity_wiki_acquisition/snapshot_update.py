@@ -804,7 +804,9 @@ def update_snapshot(
             source_replay = create_source_replay_bundle(
                 work, archive, manifest, inventory, source_replay_directory,
             )
-    except BaseException:
+    except BaseException as exc:
+        if not isinstance(exc, SnapshotUpdateIncomplete):
+            exc.add_note(f"Preserved wiki work -> {work}")
         if source_replay is not None:
             source_replay.unlink(missing_ok=True)
         if inventory is not None:
