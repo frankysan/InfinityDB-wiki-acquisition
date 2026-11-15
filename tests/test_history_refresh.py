@@ -405,7 +405,7 @@ def test_history_parent_does_not_allow_unrequested_history_loss(
         "--work-root", str(tmp_path / "cli-work"),
         "--manifest-dir", str(tmp_path / "cli-manifests"),
     ]) == 0
-    assert "Preserved complete history: 3 oldids" in capsys.readouterr().out
+    assert "Preserved history: 3 oldids" in capsys.readouterr().out
     archived = list((tmp_path / "cli-archives").glob("*.zip"))
     assert len(archived) == 1
     assert verify_snapshot(

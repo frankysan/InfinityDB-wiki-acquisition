@@ -20,6 +20,9 @@ from typing import Any
 from infinity_wiki_acquisition.snapshot_upgrade import (
     _parent_revision_records, SnapshotUpgradeIncomplete,
 )
+from infinity_wiki_acquisition.historical_only import (
+    archived_former_pages, build_historical_only_index, read_history_index,
+)
 
 
 def refresh_history_from_parent(
@@ -32,7 +35,8 @@ def refresh_history_from_parent(
     site: Any,
     language: str,
     progress: Any = None,
-) -> tuple[Any, set[int], list[dict[str, Any]]]:
+    allow_historical_only: bool = False,
+) -> tuple[Any, set[int], list[dict[str, Any]], list[Path], list[dict[str, Any]]]:
     """Return new complete history, oldid reuse identities, URL remapping.
 
     A current page absent from fresh main-namespace discovery might have
@@ -55,8 +59,9 @@ def refresh_history_from_parent(
         if type(page_id) is int and page_id > 0:
             fresh_by_id.setdefault(page_id, []).append(page)
 
-    source_to_fresh: dict[str, str] = {}
+    source_to_fresh: dict[str, str | None] = {}
     mappings: list[dict[str, Any]] = []
+    retired_current: list[dict[str, Any]] = []
     for old in current_pages:
         old_url = old["page"]["url"]
         old_id = old["sourceIdentity"].get("pageId")
@@ -72,11 +77,20 @@ def refresh_history_from_parent(
         elif len(matches) == 1:
             chosen = matches[0]
         elif not matches:
-            raise ValueError(
-                f"Historical page ID {old_id} ({old_url}) is missing from "
-                "fresh discovery; a deleted, moved or inaccessible page "
-                "cannot be silently omitted from history"
-            )
+            if not allow_historical_only:
+                raise ValueError(
+                    f"Historical page ID {old_id} ({old_url}) is missing from "
+                    "fresh discovery; use --allow-historical-only to preserve "
+                    "the unverified absence with a versioned archival index"
+                )
+            retired_current.append(old)
+            source_to_fresh[old_url] = None
+            mappings.append({
+                "pageId": old_id, "previousUrl": old_url, "currentUrl": None,
+                "identityBasis": "verified-parent-id-absent-from-allpages",
+                "changedUrl": True,
+            })
+            continue
         else:
             raise ValueError(
                 f"Historical page ID {old_id} ({old_url}) maps to multiple "
@@ -98,10 +112,12 @@ def refresh_history_from_parent(
         for prior in record["revision"]["pages"]:
             old_url = prior["url"]
             new_url = source_to_fresh.get(old_url)
+            if old_url not in source_to_fresh:
+                # Prior historical-only associations live in the v2 index
+                # and are preserved without presenting them as current pages.
+                continue
             if new_url is None:
-                raise ValueError(
-                    f"Unmapped oldid {oldid} historical association: {old_url}"
-                )
+                continue
             expected_id = next(
                 row["pageId"] for row in mappings
                 if row["previousUrl"] == old_url
@@ -119,7 +135,29 @@ def refresh_history_from_parent(
             allowed.setdefault(oldid, set()).add(new_url)
 
     reused_oldids: set[int] = set()
+    former: list[dict[str, Any]] = []
+    former_files: list[Path] = []
     with zipfile.ZipFile(source_archive) as old_zip:
+        parent_index = read_history_index(old_zip)
+        if parent_index["formatVersion"] == 2:
+            if not allow_historical_only:
+                raise ValueError(
+                    "Version 2 history parents require --allow-historical-only"
+                )
+            existing_retired_ids = {
+                entry["pageId"] for entry in parent_index["historicalOnlyPages"]
+            }
+            if any(page_id in fresh_by_id for page_id in existing_retired_ids):
+                raise ValueError(
+                    "Previously retired page ID reappeared in current discovery; "
+                    "reinstatement requires explicit source identity review"
+                )
+        if allow_historical_only:
+            former, former_files, retained_oldids = archived_former_pages(
+                parent, source_archive, retired_current, work,
+            )
+        else:
+            retained_oldids = set()
         def reuse_oldid(
             page: Any, title: str, oldid: int, parentid: int,
             timestamp: str,
@@ -173,22 +211,66 @@ def refresh_history_from_parent(
                 )
             fresh_links.add((entry["currentUrl"], oldid))
     missing = set(old_records) - set(fresh_records)
-    if missing:
+    if missing - retained_oldids:
         raise ValueError(
             f"Previously archived oldids absent from fresh history: "
-            f"{sorted(missing)[:10]}"
+            f"{sorted(missing - retained_oldids)[:10]}"
         )
+    retired_links = {
+        (page["formerUrl"], revision["oldid"])
+        for page in former for revision in page["revisions"]
+    }
     for oldid, old in old_records.items():
         prior = old["revision"]
-        if fresh_records[oldid] != (prior["parentid"], prior["timestamp"]):
+        if oldid in fresh_records and fresh_records[oldid] != (
+            prior["parentid"], prior["timestamp"],
+        ):
             raise ValueError(
                 f"Oldid {oldid} changed parent/timestamp in fresh history"
             )
         for page in prior["pages"]:
-            new_url = source_to_fresh[page["url"]]
-            if (new_url, oldid) not in fresh_links:
+            old_url = page["url"]
+            mapped = source_to_fresh.get(old_url)
+            if (mapped, oldid) not in fresh_links and (
+                old_url, oldid
+            ) not in retired_links:
                 raise ValueError(
                     "Historical page/oldid association lost: "
-                    f"{page['url']} -> {new_url}, oldid {oldid}"
+                    f"{old_url} -> {mapped}, oldid {oldid}"
                 )
-    return history, reused_oldids, mappings
+    if former:
+        # Missing oldids belong only to archived former pages, and their
+        # previously verified bytes are restored before publication.
+        with zipfile.ZipFile(source_archive) as old_zip:
+            for oldid in sorted(missing):
+                prior = old_records[oldid]
+                relative = prior["path"]
+                target = work.joinpath(*relative.split("/"))
+                if target.exists():
+                    raise ValueError("Oldid path collides with newly acquired history")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                contents = old_zip.read(relative)
+                if len(contents) != prior["size"] or hashlib.sha256(
+                    contents,
+                ).hexdigest() != prior["sha256"]:
+                    raise ValueError(f"Historical oldid {oldid} bytes changed")
+                target.write_bytes(contents)
+                reused_oldids.add(oldid)
+        index = build_historical_only_index(index, former)
+        target_index = work / "_history/index.json"
+        target_index.write_text(
+            json.dumps(index, ensure_ascii=False, sort_keys=True, indent=2)
+            + "\n", encoding="utf-8",
+        )
+        additional = [
+            work / old_records[oldid]["path"] for oldid in missing
+        ]
+        history = cli.WikiHistoryResult(
+            files=tuple(sorted(
+                set(history.files) | set(additional),
+                key=lambda path: cli.mirror_path_sort_key(path, work),
+            )),
+            failures=history.failures,
+            revision_count=index["revisionCount"],
+        )
+    return history, reused_oldids, mappings, former_files, former

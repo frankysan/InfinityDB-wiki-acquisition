@@ -282,15 +282,53 @@ ID, the number of reused and newly enumerated revisions and the full
 parent artifact lineage. History-index metadata is always rebuilt, not
 blindly copied, and current HTML is still refreshed.
 
-**Deleted or inaccessible historical pages are deliberately not
-published as current pages.** When a parent page ID cannot be
-re-established in fresh discovery, or any earlier oldid/association is
-missing or contradictory, the operation stops without publishing a ZIP,
-manifest or inventory. The prior snapshot remains available and the
-staging work is retained. A *historical-only page/tombstone* representation
-needs explicit schema and downstream consumer review before such
-updates can be published (remaining P2.3c.2). Archive-derived resume
-remains P2.5.
+### Opt-in retention of missing historical pages (P2.3c.2)
+
+By default, if a historical page ID is missing from fresh MediaWiki
+`allpages` enumeration, `--update-from` still blocks publication rather
+than silently discarding its old HTML or oldids. A *missing* ID is **not
+proof of deletion**; the source page might have moved outside the
+enumerated namespace or become inaccessible.
+
+To explicitly retain such pages, use:
+
+```powershell
+infinity-wiki-snapshot --update-from "path/to/history-parent.zip" --allow-historical-only
+```
+
+This requires a verified history-enabled parent. The resulting archive
+uses **history index formatVersion 2 and inventory formatVersion 2** only
+when historical-only pages exist. All fresh current pages remain in
+`_history/index.json.pages` and are re-enumerated. Formerly current HTML
+is moved to `_history/retired/<pageId>/<URL-hash>.html` and classified as
+`kind: historical-page`, never `current-page`. Each
+`historicalOnlyPages` entry retains a page ID, original URL and member
+path, last known current title, historical canonical title, byte hash,
+original acquisition time and the previously archived oldid associations.
+Their explicit `status: absent-from-current-enumeration` and
+`historyScope: last-archived-only` do **not** claim those pages are
+currently published or that their revisions were freshly enumerated.
+The top-level `historyCoverage:
+current-all-observed-former-last-archived` identifies the mixed
+coverage. A deleted-page log entry, if observed, remains separately
+audited RecentChanges evidence rather than an automatic deletion verdict.
+
+The producer's offline verifier checks all v2 member hashes, original
+page IDs, index/inventory relationships, oldid links, and explicit
+absence mappings. Successive v2 updates preserve earlier retired pages;
+if a retired ID reappears in fresh discovery, publication stops pending
+explicit reinstatement review. The old archive remains immutable.
+
+**Consumer compatibility:** v1 index/inventory snapshots remain unchanged;
+the v2 extension is an explicit opt-in, not a silent schema upgrade.
+At the inspected InfinityDB `dev/v1.1.0` checkout
+`0c853e74abf0956fd5d571920189f72a5db4c01c`, the research audit
+reader at `tools/research/audit_1_0_reference_inputs.py` iterates
+`pages` only, so it will not include `historicalOnlyPages` in oldid
+lookup. Do not ingest v2 snapshots into downstream consumers until they
+are independently reviewed and validated for the extension. The CLI
+prints this warning on v2 publication. No sibling repository is changed
+automatically. Archive-derived work resume remains P2.5.
 
 ### Resume historical revisions
 

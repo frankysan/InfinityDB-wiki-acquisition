@@ -36,6 +36,7 @@ _KINDS = {
     "generated-index": "generated",
     "asset": "source-bytes",
     "unknown": "unknown",
+    "historical-page": "inherited-offline-mirrored",
 }
 
 
@@ -188,6 +189,41 @@ def _member_metadata(
                      and ((resolution == "archived" and target_path in paths)
                           or (resolution != "archived" and target_path is None)),
                      f"Contradictory source relationship at {path}")
+    elif kind == "historical-page":
+        from infinity_wiki_acquisition.historical_only import (
+            FORMER_REVISION_SCOPE, FORMER_STATUS, historical_page_path,
+        )
+
+        _require(history and path.startswith("_history/retired/"),
+                 f"Historical-only content outside the history archive: {path}")
+        former = _object(member.get("formerPage"), f"{path}.formerPage")
+        _require(set(former) == {
+            "pageId", "formerUrl", "formerTitle", "lastKnownCurrentTitle",
+            "originalPath", "originalSha256", "lastKnownCurrentAcquiredAt",
+            "status", "historyScope",
+        }, f"Historical-only page metadata incomplete at {path}")
+        page_id = former["pageId"]
+        url = _string(former["formerUrl"], f"{path}.formerUrl")
+        _require(type(page_id) is int and page_id > 0
+                 and path == historical_page_path(page_id, url)
+                 and urls == [url]
+                 and isinstance(former["formerTitle"], str)
+                 and bool(former["formerTitle"])
+                 and isinstance(former["lastKnownCurrentTitle"], str)
+                 and bool(former["lastKnownCurrentTitle"])
+                 and isinstance(former["originalPath"], str)
+                 and bool(former["originalPath"])
+                 and former["status"] == FORMER_STATUS
+                 and former["historyScope"] == FORMER_REVISION_SCOPE
+                 and _digest(former["originalSha256"],
+                             f"{path}.originalSha256") == member["sha256"],
+                 f"Historical-only page identity invalid at {path}")
+        stamp = datetime.fromisoformat(
+            _string(former["lastKnownCurrentAcquiredAt"],
+                    f"{path}.lastKnownCurrentAcquiredAt"),
+        )
+        _require(stamp.tzinfo is not None and stamp.utcoffset() is not None,
+                 f"Historical-only acquisition timestamp invalid: {path}")
     elif kind == "asset":
         _require(bool(urls), f"Asset lacks source URLs at {path}")
         version = member.get("sourceVersion")
@@ -258,7 +294,7 @@ def _member_metadata(
     # An unidentified member may still have observed URLs: the association
     # alone does not prove whether it is a page or an asset.
 
-    if kind in {"current-page", "revision"}:
+    if kind in {"current-page", "revision", "historical-page"}:
         rendered = _object(member.get("renderedIdentity"), f"{path}.renderedIdentity")
         _require(rendered.get("memberPath") == path
                  and rendered.get("sha256") == member["sha256"],
@@ -302,6 +338,10 @@ def verify_snapshot(
             "format", "formatVersion", "site", "language", "history", "snapshot",
             "source", "captureMetadata", "parent", "members", "ignoredUrls",
         }, "Inventory top-level fields are incomplete or unsupported")
+        _require(document["formatVersion"] in (1, 2),
+                 "Unsupported inventory version")
+        _require(document["formatVersion"] != 2 or document["history"],
+                 "Historical inventory v2 requires revision history")
         _require(set(record) == {
             "archiveName", "archiveSha256", "contentSha256", "acquiredAt", "memberCount",
         }, "Inventory snapshot fields are incomplete or unsupported")
@@ -498,13 +538,20 @@ def verify_snapshot(
                     event_ids.add(rcid)
                 if history_refresh is not None:
                     history_refresh = _object(history_refresh, "historyRefresh")
-                    _require(set(history_refresh) == {
+                    _require(set(history_refresh) == ({
                         "sourceOldidCount", "reusedOldidCount",
                         "freshOldidCount", "pageMappings", "historyCutoff",
                         "historyRetrievedAt",
-                    }, "Unsupported historical refresh metadata")
+                    } | ({
+                        "historicalOnlyPageCount",
+                    } if document["formatVersion"] == 2 else set())),
+                             "Unsupported historical refresh metadata")
                     _require(
-                        history_refresh["historyCutoff"] == "all-observed"
+                        history_refresh["historyCutoff"] == (
+                            "current-all-observed-former-last-archived"
+                            if document["formatVersion"] == 2
+                            else "all-observed"
+                        )
                         and type(history_refresh["sourceOldidCount"]) is int
                         and history_refresh["sourceOldidCount"] > 0
                         and type(history_refresh["reusedOldidCount"]) is int
@@ -516,7 +563,15 @@ def verify_snapshot(
                         and history_refresh["freshOldidCount"]
                         >= history_refresh["sourceOldidCount"]
                         and isinstance(history_refresh["pageMappings"], list)
-                        and bool(history_refresh["pageMappings"]),
+                        and bool(history_refresh["pageMappings"])
+                        and (
+                            document["formatVersion"] != 2
+                            or (
+                                type(history_refresh["historicalOnlyPageCount"])
+                                is int
+                                and history_refresh["historicalOnlyPageCount"] > 0
+                            )
+                        ),
                         "History refresh cannot claim incomplete oldid coverage",
                     )
                     historical_at = datetime.fromisoformat(
@@ -652,7 +707,16 @@ def verify_snapshot(
                      "History entries in non-history snapshot")
             revision_sources = _history_sources(source_zip) if history else {}
             if history:
-                history_index = json.loads(source_zip.read("_history/index.json"))
+                from infinity_wiki_acquisition.historical_only import (
+                    FORMER_STATUS, FORMER_REVISION_SCOPE,
+                    HISTORICAL_COVERAGE, read_history_index,
+                )
+                history_index = read_history_index(source_zip)
+                index_version = history_index["formatVersion"]
+                _require(
+                    document["formatVersion"] == index_version,
+                    "History index/inventory versions must match",
+                )
                 for page in history_index["pages"]:
                     current_path = page.get("currentPath")
                     _require(isinstance(current_path, str)
@@ -661,6 +725,89 @@ def verify_snapshot(
                              "History index references absent current-page member")
                     _require(page["currentUrl"] in entries[current_path]["sourceUrls"],
                              "History index current-page URL differs from inventory")
+                if index_version == 2:
+                    former_entries = history_index["historicalOnlyPages"]
+                    former_paths: set[str] = set()
+                    former_urls: set[str] = set()
+                    live_ids = {
+                        member["sourceIdentity"]["pageId"]
+                        for member in entries.values()
+                        if member["kind"] == "current-page"
+                        and member["sourceIdentity"]["pageId"] is not None
+                    }
+                    for former in former_entries:
+                        _require(
+                            isinstance(former, dict)
+                            and set(former) == {
+                                "pageId", "formerUrl", "formerTitle",
+                                "lastKnownCurrentTitle", "originalPath",
+                                "archivedPath", "originalSha256",
+                                "lastKnownCurrentAcquiredAt",
+                                "status", "historyScope", "revisions",
+                            }, "Unsupported historical-only index record")
+                        former_path = former["archivedPath"]
+                        url = former["formerUrl"]
+                        item = entries.get(former_path)
+                        _require(
+                            isinstance(url, str) and url not in former_urls
+                            and isinstance(former_path, str)
+                            and former_path not in former_paths
+                            and item is not None
+                            and item["kind"] == "historical-page"
+                            and item["formerPage"] == {
+                                key: former[key] for key in (
+                                    "pageId", "formerUrl", "formerTitle",
+                                    "lastKnownCurrentTitle", "originalPath",
+                                    "originalSha256",
+                                    "lastKnownCurrentAcquiredAt",
+                                    "status", "historyScope",
+                                )
+                            }
+                            and former["pageId"] not in live_ids
+                            and former["status"] == FORMER_STATUS
+                            and former["historyScope"] == FORMER_REVISION_SCOPE
+                            and isinstance(former["revisions"], list)
+                            and bool(former["revisions"]),
+                            "Historical-only index identity conflicts with current pages",
+                        )
+                        former_paths.add(former_path)
+                        former_urls.add(url)
+                        for rev in former["revisions"]:
+                            _require(
+                                isinstance(rev, dict)
+                                and type(rev.get("oldid")) is int
+                                and rev["oldid"] > 0
+                                and rev.get("path") ==
+                                f"_history/oldid/{rev['oldid']}.html",
+                                "Historical-only revision reference invalid",
+                            )
+                            oldid_entry = entries.get(rev["path"])
+                            _require(
+                                oldid_entry is not None
+                                and oldid_entry["kind"] == "revision"
+                                and {"url": url, "pageId": former["pageId"]}
+                                in oldid_entry["sourceIdentity"]["pageIds"]
+                                and {
+                                    "url": url, "title": former["formerTitle"],
+                                } in oldid_entry["revision"]["pages"],
+                                "Historical-only revision lost page ID/title association",
+                            )
+                    _require(
+                        former_paths == {
+                            path for path, item in entries.items()
+                            if item["kind"] == "historical-page"
+                        },
+                        "Historical-only index and inventory member sets differ",
+                    )
+                else:
+                    _require(
+                        not any(item["kind"] == "historical-page"
+                                for item in entries.values()),
+                        "Historical-only members require history index v2",
+                    )
+            else:
+                _require(document["formatVersion"] == 1,
+                         "History inventory v2 cannot be non-history")
             _require(all(path in paths for path in revision_sources),
                      "History index references absent ZIP members")
             _require(
@@ -715,20 +862,58 @@ def verify_snapshot(
                     prior_url = mapping["previousUrl"]
                     new_url = mapping["currentUrl"]
                     current_member = current_by_url.get(new_url)
+                    if new_url is None:
+                        former_index = history_index.get(
+                            "historicalOnlyPages", [],
+                        )
+                        candidates = [
+                            row for row in former_index
+                            if row["formerUrl"] == prior_url
+                        ]
+                        missing_ids = metadata["parentPageIdsAbsentFromEnumeration"]
+                        _require(
+                            document["formatVersion"] == 2
+                            and len(candidates) == 1
+                            and mapping["pageId"] == candidates[0]["pageId"]
+                            and mapping["identityBasis"]
+                            == "verified-parent-id-absent-from-allpages"
+                            and mapping["changedUrl"] is True
+                            and any(
+                                isinstance(row, dict)
+                                and row.get("pageId") == mapping["pageId"]
+                                and row.get("oldUrl") == prior_url
+                                and row.get("status")
+                                == "absent-from-current-enumeration"
+                                for row in missing_ids
+                            ),
+                            "Unverified historical-only page mapping",
+                        )
+                    else:
+                        _require(
+                            current_member is not None
+                            and current_member["sourceIdentity"]["pageId"]
+                            == mapping["pageId"]
+                            and mapping["identityBasis"]
+                            == "verified-allpages-page-id"
+                            and mapping["changedUrl"] is (prior_url != new_url),
+                            "Historical page mapping contradicts current identity",
+                        )
                     _require(
                         isinstance(prior_url, str)
                         and prior_url not in previous_urls
-                        and current_member is not None
                         and type(mapping["pageId"]) is int
-                        and mapping["pageId"] > 0
-                        and current_member["sourceIdentity"]["pageId"]
-                        == mapping["pageId"]
-                        and mapping["identityBasis"]
-                        == "verified-allpages-page-id"
-                        and mapping["changedUrl"] is (prior_url != new_url),
-                        "Historical page mapping contradicts current identity",
+                        and mapping["pageId"] > 0,
+                        "Historical mapping previous identity is invalid",
                     )
                     previous_urls.add(prior_url)
+                if document["formatVersion"] == 2:
+                    _require(
+                        history_refresh["historicalOnlyPageCount"] ==
+                        len(history_index["historicalOnlyPages"])
+                        and history_index["historyCoverage"] ==
+                        "current-all-observed-former-last-archived",
+                        "Historical-only coverage differs from index",
+                    )
                 _require(
                     history_refresh["freshOldidCount"] ==
                     sum(item["kind"] == "revision"

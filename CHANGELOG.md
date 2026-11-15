@@ -47,6 +47,19 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added opt-in P2.3c.2 historical-only retention
+  (`--update-from --allow-historical-only`). If a previously archived
+  page ID is absent from fresh discovery, a new v2 history index and
+  inventory preserve the old HTML under `_history/retired/` and its
+  original oldid/title/source associations without presenting that
+  page as current or asserting verified deletion. Fresh current pages
+  still use all-observed histories; former pages explicitly carry
+  last-archived-only coverage. Previous v1 archives remain unchanged,
+  v2-to-v2 updates keep retired pages, and reappearance requires
+  deliberate identity review. Offline verification checks the new
+  index/member/absence relationships. Existing downstream readers
+  may ignore historical-only references; v2 publication is opt-in
+  and warns that consumer acceptance remains separate.
 - **Acquisition:** Added P2.3c.1 history-preserving `--update-from`
   updates. History-enabled parents now trigger fresh page/asset
   acquisition and complete revision re-enumeration. Oldid bytes are

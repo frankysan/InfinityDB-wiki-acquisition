@@ -247,11 +247,42 @@ Agents start with [AGENTS.md](../AGENTS.md).
   and `historyCutoff: all-observed`, cross-checked by the independent
   verifier. The previous complete ZIP/manifest/inventory remain immutable.
   If an earlier page's numeric ID cannot be found in fresh discovery,
-  refuse publication: a deleted/unavailable title cannot be quietly
-  omitted or represented as a current page with stale HTML. A properly
-  typed historical-only page and matching history index semantics still
-  require schema/consumer review (P2.3c.2). Failed staging remains
-  available; restarting it is deferred to P2.5.
+  refuse publication by default: absence is not verified deletion.
+  Opt-in historical-only preservation is separately versioned (P2.3c.2).
+  Failed staging remains available; restarting it is deferred to P2.5.
+- P2.3c.2 introduces **only for explicit `--allow-historical-only`**
+  a new history index `formatVersion: 2` and inventory `formatVersion: 2`
+  when missing historical page IDs must be retained. The existing v1
+  formats remain untouched and supported by the same offline verifier.
+  The opt-in command is valid only with `--update-from` and a verified
+  history-enabled parent. Previous current-page HTML, whose original
+  ID is absent from refreshed allpages enumeration, is stored as an
+  immutable `historical-page` under
+  `_history/retired/<pageId>/<SHA-256 URL prefix>.html`, with original
+  URL, prior member path/hash, last known current title, archived
+  canonical history title and first observed acquisition timestamp.
+  Such a page **is not current and is not confirmed deleted**.
+  `_history/index.json.historicalOnlyPages` contains the exact oldid
+  records still tied to that former page. Existing parent oldids are
+  retained from verified ZIP bytes, and all previous page/oldid
+  associations must be present under either freshly enumerated
+  `pages` or the explicitly retained former pages. The v2
+  `historyCoverage` and per-page `historyScope: last-archived-only`
+  make the absence of current enumeration explicit; live page history
+  remains all-observed. The independent verifier enforces page-ID
+  absence evidence, v2 member kinds, source URLs, byte hashes, oldid
+  identity and the index/inventory version pairing. Repeating a v2
+  update retains historical-only bytes and oldids. If such an ID
+  reappears in allpages, require explicit reinstatement review rather
+  than reclassifying it silently.
+  **Consumer boundary:** Inspected InfinityDB `dev/v1.1.0`
+  `0c853e74abf0956fd5d571920189f72a5db4c01c` read-only.
+  Its `tools/research/audit_1_0_reference_inputs.py` history index
+  reader iterates `pages` but not `historicalOnlyPages`; therefore
+  producer v2 verification does *not* grant downstream acceptance.
+  Keep v2 opt-in with a CLI compatibility warning until separately
+  authorized, pinned consumer tests cover historical-only references.
+  Archive-derived resume remains P2.5.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

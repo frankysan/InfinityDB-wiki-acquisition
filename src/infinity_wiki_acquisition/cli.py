@@ -2029,6 +2029,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--allow-historical-only",
+        action="store_true",
+        help=(
+            "Explicitly allow a v2 history index and v2 inventory for "
+            "missing former pages during --update-from; old consumer readers "
+            "must be upgraded separately"
+        ),
+    )
+    parser.add_argument(
         "--from-manifest",
         type=Path,
         help="Parent provenance JSON for --from-snapshot/--update-from",
@@ -2097,6 +2106,7 @@ def main(argv: list[str] | None = None) -> int:
                 work_root=args.work_root,
                 expected_site=args.site, expected_language=args.language,
                 require_history=args.include_history,
+                allow_historical_only=args.allow_historical_only,
             )
         except SnapshotUpdateIncomplete as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -2121,12 +2131,26 @@ def main(argv: list[str] | None = None) -> int:
         )
         if updated.history_revisions:
             print(
-                f"Preserved complete history: {updated.history_revisions} oldids "
+                f"Preserved history: {updated.history_revisions} oldids "
                 f"({updated.reused_revisions} reused from parent)"
+            )
+        if updated.historical_only_pages:
+            print(
+                "WARNING: This opt-in v2 archive contains "
+                f"{updated.historical_only_pages} historical-only page(s). "
+                "Old v1 consumers may ignore their revisions; verify "
+                "downstream v2 support before ingestion.",
+                file=sys.stderr,
             )
         print(f"Snapshot provenance -> {updated.manifest}")
         print(f"Snapshot inventory -> {updated.inventory}")
         return 0
+    if args.allow_historical_only:
+        print(
+            "ERROR: --allow-historical-only requires --update-from",
+            file=sys.stderr,
+        )
+        return 1
     if args.from_snapshot is not None:
         if not args.include_history or args.retry_failed_only or args.resume_work is not None:
             print(

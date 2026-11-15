@@ -54,6 +54,7 @@ class SnapshotUpdateResult(NamedTuple):
     moved_pages: int
     history_revisions: int = 0
     reused_revisions: int = 0
+    historical_only_pages: int = 0
 
 
 def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -67,7 +68,7 @@ def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
     for member in parent["members"]:
         if member["kind"] not in {"current-page", "asset"}:
             if parent["history"] and member["kind"] in {
-                "revision", "generated-index",
+                "revision", "generated-index", "historical-page",
             }:
                 continue
             raise ValueError(
@@ -279,6 +280,7 @@ def update_snapshot(
     expected_language: str | None = None,
     progress: Any = None,
     require_history: bool = False,
+    allow_historical_only: bool = False,
 ) -> SnapshotUpdateResult:
     """Refresh current content and publish a new independently verified snapshot.
 
@@ -293,6 +295,15 @@ def update_snapshot(
     if require_history and not parent["history"]:
         raise ValueError(
             "--include-history with --update-from requires a history-enabled parent"
+        )
+    if allow_historical_only and not parent["history"]:
+        raise ValueError(
+            "--allow-historical-only requires a history-enabled parent"
+        )
+    if parent["formatVersion"] == 2 and not allow_historical_only:
+        raise ValueError(
+            "A v2 historical-only parent requires --allow-historical-only "
+            "before any network acquisition"
         )
     previous_by_url = _parent_sources(parent)
     site = cli.WIKI_SITES[parent["site"]]
@@ -486,21 +497,26 @@ def update_snapshot(
         history_result = None
         oldids_reused: set[int] = set()
         history_mappings: list[dict[str, Any]] = []
+        former_files: list[Path] = []
+        former_records: list[dict[str, Any]] = []
         if parent["history"]:
             from infinity_wiki_acquisition.history_refresh import (
                 refresh_history_from_parent,
             )
 
             try:
-                history_result, oldids_reused, history_mappings = (
-                    refresh_history_from_parent(
-                        parent, source_archive, tuple(fresh.pages),
-                        state["pageIds"], work, site=site, language=language,
-                    )
+                (
+                    history_result, oldids_reused, history_mappings,
+                    former_files, former_records,
+                ) = refresh_history_from_parent(
+                    parent, source_archive, tuple(fresh.pages),
+                    state["pageIds"], work, site=site, language=language,
+                    allow_historical_only=allow_historical_only,
                 )
             except SnapshotUpgradeIncomplete as exc:
                 raise SnapshotUpdateIncomplete(work, exc.failures) from exc
             files.extend(history_result.files)
+            files.extend(former_files)
         archive = cli.archive_wiki(
             files, archive_directory, root=work, site=site,
             language=language, include_history=parent["history"],
@@ -547,6 +563,15 @@ def update_snapshot(
         matched.update(
             f"_history/oldid/{oldid}.html"
             for oldid in oldids_reused
+        )
+        # Inherited v2 historical-page members are copied byte-for-byte
+        # from the verified parent under the same archived path.
+        matched.update(
+            row["archivedPath"]
+            for row in former_records
+            if row["archivedPath"] in old_members_by_path
+            and old_members_by_path[row["archivedPath"]]["kind"]
+            == "historical-page"
         )
         changed = (new_paths & old_paths) - matched
         added = new_paths - old_paths
@@ -630,8 +655,14 @@ def update_snapshot(
                     "reusedOldidCount": len(oldids_reused),
                     "freshOldidCount": history_result.revision_count,
                     "pageMappings": history_mappings,
-                    "historyCutoff": "all-observed",
+                    "historyCutoff": (
+                        "current-all-observed-former-last-archived"
+                        if former_records else "all-observed"
+                    ),
                     "historyRetrievedAt": acquired_at.isoformat(timespec="seconds"),
+                    **({
+                        "historicalOnlyPageCount": len(former_records),
+                    } if former_records else {}),
                 }
             } if history_result is not None else {}),
             "sourceTimeCoverage": assess_source_time_coverage(
@@ -669,4 +700,5 @@ def update_snapshot(
         len(added), len(removed), len(moved),
         history_result.revision_count if history_result is not None else 0,
         len(oldids_reused),
+        len(former_records),
     )

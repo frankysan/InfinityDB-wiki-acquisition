@@ -24,6 +24,7 @@ from infinity_wiki_acquisition.snapshot_provenance import load_snapshot_manifest
 
 INVENTORY_FORMAT = "InfinityDB wiki snapshot inventory"
 INVENTORY_VERSION = 1
+HISTORICAL_INVENTORY_VERSION = 2
 
 
 def _member_hash(stream: Any) -> str:
@@ -39,16 +40,21 @@ def _history_sources(archive: zipfile.ZipFile) -> dict[str, dict[str, Any]]:
         document = json.loads(archive.read("_history/index.json"))
     except (KeyError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("History inventory requires a valid _history/index.json") from exc
-    if not (
-        isinstance(document, dict)
-        and document.get("format") == "InfinityDB wiki revision history"
-        and document.get("formatVersion") == 1
-        and isinstance(document.get("pages"), list)
-    ):
-        raise ValueError("Invalid archived history index")
+    from infinity_wiki_acquisition.historical_only import read_history_index
 
+    document = read_history_index(archive)
     refs: dict[str, dict[str, Any]] = {}
-    for page in document["pages"]:
+    entries = list(document["pages"])
+    if document["formatVersion"] == 2:
+        entries.extend(
+            {
+                "currentUrl": page["formerUrl"],
+                "title": page["formerTitle"],
+                "revisions": page["revisions"],
+            }
+            for page in document["historicalOnlyPages"]
+        )
+    for page in entries:
         if not (
             isinstance(page, dict)
             and isinstance(page.get("currentUrl"), str)
@@ -156,6 +162,21 @@ def build_snapshot_inventory(
 
     members: list[dict[str, Any]] = []
     with zipfile.ZipFile(archive) as source:
+        history_index = None
+        former_by_path: dict[str, dict[str, Any]] = {}
+        former_by_url: dict[str, dict[str, Any]] = {}
+        if include_history:
+            from infinity_wiki_acquisition.historical_only import read_history_index
+            history_index = read_history_index(source)
+            if history_index["formatVersion"] == 2:
+                former_by_path = {
+                    page["archivedPath"]: page
+                    for page in history_index["historicalOnlyPages"]
+                }
+                former_by_url = {
+                    page["formerUrl"]: page
+                    for page in history_index["historicalOnlyPages"]
+                }
         revision_sources = _history_sources(source) if include_history else {}
         names = {info.filename for info in source.infolist() if not info.is_dir()}
         if any(path not in names for path in revision_sources):
@@ -252,6 +273,22 @@ def build_snapshot_inventory(
                             f"Current revision observation does not match page: {path}"
                         )
                     entry["currentRevision"] = revision
+            elif path in former_by_path:
+                kind = "historical-page"
+                former = former_by_path[path]
+                refs = [former["formerUrl"]]
+                entry = {
+                    "representation": "inherited-offline-mirrored",
+                    "formerPage": {
+                        key: former[key] for key in (
+                            "pageId", "formerUrl", "formerTitle",
+                            "lastKnownCurrentTitle", "originalPath", "originalSha256",
+                            "lastKnownCurrentAcquiredAt",
+                            "status", "historyScope",
+                        )
+                    },
+                    "renderedIdentity": {"memberPath": path},
+                }
             elif path in revision_sources:
                 kind = "revision"
                 revision = revision_sources[path]
@@ -267,7 +304,14 @@ def build_snapshot_inventory(
                     "sourceIdentity": {
                         "revisionId": revision["revision"]["oldid"],
                         "pageIds": [
-                            {"url": url, "pageId": page_ids.get(url)}
+                            {
+                                "url": url,
+                                "pageId": (
+                                    page_ids.get(url)
+                                    if url not in former_by_url
+                                    else former_by_url[url]["pageId"]
+                                ),
+                            }
                             for url, _title in sorted(revision["pages"])
                         ],
                     },
@@ -288,7 +332,7 @@ def build_snapshot_inventory(
                 version = read_asset_evidence(work, refs[0], path, digest)
                 if version is not None:
                     entry["sourceVersion"] = version
-            if kind in {"current-page", "revision"}:
+            if kind in {"current-page", "revision", "historical-page"}:
                 entry["renderedIdentity"]["sha256"] = digest
             members.append({
                 "path": path,
@@ -303,7 +347,11 @@ def build_snapshot_inventory(
         raise ValueError("Inventory ZIP member count differs from published provenance")
     return {
         "format": INVENTORY_FORMAT,
-        "formatVersion": INVENTORY_VERSION,
+        "formatVersion": (
+            HISTORICAL_INVENTORY_VERSION
+            if history_index is not None and history_index["formatVersion"] == 2
+            else INVENTORY_VERSION
+        ),
         "site": site,
         "language": language,
         "history": include_history,
@@ -395,7 +443,9 @@ def load_snapshot_inventory(
     if not (
         isinstance(document, dict)
         and document.get("format") == INVENTORY_FORMAT
-        and document.get("formatVersion") == INVENTORY_VERSION
+        and document.get("formatVersion") in (
+            INVENTORY_VERSION, HISTORICAL_INVENTORY_VERSION,
+        )
         and isinstance(document.get("snapshot"), dict)
         and isinstance(document.get("members"), list)
         and document["snapshot"].get("memberCount") == len(document["members"])
