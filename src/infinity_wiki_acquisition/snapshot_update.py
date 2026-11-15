@@ -285,6 +285,7 @@ def update_snapshot(
     require_history: bool = False,
     allow_historical_only: bool = False,
     source_replay_directory: Path | None = None,
+    resume_work: Path | None = None,
 ) -> SnapshotUpdateResult:
     """Refresh current content and publish a new independently verified snapshot.
 
@@ -324,18 +325,78 @@ def update_snapshot(
         raise ValueError(f"Source snapshot site mismatch: {expected_site}")
     if expected_language is not None and expected_language != language:
         raise ValueError(f"Source snapshot language mismatch: {expected_language}")
-    acquired_at = now or datetime.now().astimezone()
-    parent_at = datetime.fromisoformat(parent["snapshot"]["acquiredAt"])
-    if acquired_at.tzinfo is None or acquired_at.utcoffset() is None or acquired_at < parent_at:
-        raise ValueError("Updated snapshot time must be aware and not precede its parent")
+    from infinity_wiki_acquisition.archive_run import open_archive_run
+    from infinity_wiki_acquisition.update_resume import (
+        RECENT_FILE, load_recent_changes, write_recent_changes,
+        write_asset_decision, load_saved_asset_decisions,
+        validate_saved_current_pages, validate_postcrawl_observations,
+    )
 
-    changes = scan_recent_changes(
-        site, language, since=parent_at, until=acquired_at,
+    parent_at = datetime.fromisoformat(parent["snapshot"]["acquiredAt"])
+    started_at = now or datetime.now().astimezone()
+    if (started_at.tzinfo is None or started_at.utcoffset() is None
+            or (resume_work is None and started_at < parent_at)):
+        raise ValueError("Updated snapshot time must be aware and not precede its parent")
+    work = (
+        resume_work if resume_work is not None
+        else cli.create_wiki_work_directory(
+            work_root, site=site, language=language, now=started_at,
+            include_history=parent["history"],
+        )
     )
-    work = cli.create_wiki_work_directory(
-        work_root, site=site, language=language, now=acquired_at,
-        include_history=parent["history"],
+    run = open_archive_run(
+        work, source_archive, source_manifest, source_inventory,
+        mode="current-refresh", site=site.key, language=language,
+        options={
+            "includeHistory": parent["history"],
+            "requireHistory": require_history,
+            "allowHistoricalOnly": allow_historical_only,
+            "sourceReplay": source_replay_directory is not None,
+        },
+        resume=resume_work is not None, started_at=started_at,
     )
+    acquired_at = datetime.fromisoformat(run["startedAt"])
+    if acquired_at < parent_at:
+        raise ValueError("Updated snapshot time precedes its verified parent")
+
+    if resume_work is not None:
+        if (work / RECENT_FILE).exists():
+            changes = load_recent_changes(
+                work, parent_at=parent_at, acquired_at=acquired_at,
+            )
+        elif (work / CHECKPOINT_FILENAME).exists():
+            raise ValueError(
+                "Resumed current crawl has no retained RecentChanges scan"
+            )
+        else:
+            changes = scan_recent_changes(
+                site, language, since=parent_at, until=acquired_at,
+            )
+            write_recent_changes(
+                work, changes, parent_at=parent_at, acquired_at=acquired_at,
+            )
+    else:
+        changes = scan_recent_changes(
+            site, language, since=parent_at, until=acquired_at,
+        )
+        write_recent_changes(
+            work, changes, parent_at=parent_at, acquired_at=acquired_at,
+        )
+    if resume_work is not None and (work / CHECKPOINT_FILENAME).is_file():
+        saved_state = read_crawl_checkpoint(
+            work / CHECKPOINT_FILENAME, work=work, site=site.key,
+            language=language, root_url=cli.canonical_crawl_url(
+                site.root_urls[language], site=site,
+            ), require_complete=False,
+        )
+        validate_saved_current_pages(
+            work, saved_state,
+            require_source_replay=source_replay_directory is not None,
+        )
+        load_saved_asset_decisions(
+            work, saved_state["saved"], saved_state["discovered"],
+            parent_by_url=previous_by_url, site=site,
+        )
     archive: Path | None = None
     manifest: Path | None = None
     inventory: Path | None = None
@@ -439,13 +500,24 @@ def update_snapshot(
                     url, language=language, site=site,
                 )
 
+            def fetch_asset_recorded(url: str) -> bytes:
+                payload = fetch_asset(url)
+                write_asset_decision(
+                    work, url, cli.local_relative_path(
+                        url, asset=True, site=site,
+                    ), payload,
+                    upload=upload_versions.get(url),
+                    conditional_reused=url in conditionally_reused_urls,
+                )
+                return payload
+
             try:
                 fresh = cli.download_wiki(
                     site.root_urls[language], work,
                     site=site, language=language,
                     checkpoint_file=work / CHECKPOINT_FILENAME,
                     progress=progress, force_allpages=True,
-                    asset_fetch=fetch_asset,
+                    asset_fetch=fetch_asset_recorded,
                     **({"retain_source_html": True}
                        if source_replay_directory is not None else {}),
                 )
@@ -465,6 +537,13 @@ def update_snapshot(
         )
         if state["failed"]:
             raise ValueError("Updated crawl contains unresolved failures")
+        (
+            upload_versions, conditionally_reused_urls,
+            upload_sha1_reused_urls,
+        ) = load_saved_asset_decisions(
+            work, state["saved"], state["discovered"],
+            parent_by_url=previous_by_url, site=site,
+        )
         if (any(
             item["kind"] == "current-page"
             and item["sourceIdentity"].get("pageId") is not None
@@ -477,18 +556,26 @@ def update_snapshot(
             observe_current_revisions,
         )
 
-        observe_current_revisions(
-            fresh.pages, state["pageIds"], work,
-            site=site, language=language,
+        saved_revisions, saved_relationships = (
+            validate_postcrawl_observations(
+                work, fresh.pages, state["pageIds"],
+                site=site.key, language=language,
+            )
         )
+        if not saved_revisions:
+            observe_current_revisions(
+                fresh.pages, state["pageIds"], work,
+                site=site, language=language,
+            )
         from infinity_wiki_acquisition.page_relationships import (
             observe_page_relationships,
         )
 
-        observe_page_relationships(
-            fresh.pages, state["pageIds"], work,
-            site=site, language=language,
-        )
+        if not saved_relationships:
+            observe_page_relationships(
+                fresh.pages, state["pageIds"], work,
+                site=site, language=language,
+            )
         # Every member is now backed by freshly fetched bytes OR an explicit
         # remote version validation against verified parent ZIP content.
         # Recopy only matching members to maintain exact parent bytes.

@@ -169,9 +169,8 @@ An already saved oldid is not fetched twice. Success deletes staging as
 usual; failure preserves it. The receipt and accounting log are private,
 never members of the new ZIP. Parent files are never modified.
 `--retry-failed-only` remains reserved for ordinary crawl checkpoints,
-not archive-derived history upgrades. `--update-from --resume-work`
-is **not yet supported**; its separate current-content and RecentChanges
-recovery contract remains open in P2.5b.
+not archive-derived history upgrades. Archive-derived current refreshes
+also support `--resume-work` (see P2.5b below).
 
 ### Refresh a completed current-content snapshot (P2.3a–b)
 
@@ -187,11 +186,44 @@ As with `--from-snapshot`, the default parent JSON paths are resolved below
 `--manifest-dir`; `--from-manifest` and `--from-inventory` override those
 inputs. The source site/language are inferred and explicit mismatches fail
 before any network requests. `--update-from` cannot be combined with
-`--from-snapshot`, `--resume-work`, or `--retry-failed-only`.
+`--from-snapshot` or `--retry-failed-only`, but can now resume using
+`--resume-work` with a matching private run receipt.
 The optional `--include-history` is accepted
 only when the parent already contains history; without it, history is
 preserved automatically whenever present. Adding history to a
 non-history archive still uses `--from-snapshot --include-history`.
+
+**Resume an interrupted current-content update (P2.5b):**
+Use the **same verified parent ZIP, manifest and inventory** that started
+the update, and supply the preserved work path printed after a failed run:
+
+```powershell
+infinity-wiki-snapshot --update-from "local/data/wiki/HUMAN-SPHERE 20261001-120000.zip" --resume-work "local/work/wiki/HUMAN-SPHERE 20261115-160000.work"
+```
+
+Keep the original options on resume, including `--allow-historical-only`
+and `--source-replay-dir` when originally selected; the private run
+receipt checks these options before any source requests. A previously
+completed RecentChanges scan is used unchanged rather than requested
+again. The crawl checkpoint resumes the last committed allpages
+continuation, remaining source URLs and previously saved pages/assets;
+stored page rewrite hashes, original-HTML replay inputs (when enabled),
+asset-version observations and their actual body hashes are verified
+before trusting completed work. Uncommitted downloads are still
+revalidated before publication; conflicting or missing evidence blocks
+the resume rather than silently claiming completeness.
+
+If current HTML acquisition finished before interruption, matching
+post-crawl current-revision and template/category observations can also
+be reused after checking their exact page ID, URL, path and original
+fetch time. A history-enabled parent resumes outstanding oldid
+enumeration/downloads, preserving actual oldid reuse counts and v2
+historical-only pages. HTTP 304 and MediaWiki imageinfo asset reuse
+counts are restored from per-asset evidence bound to saved file bytes.
+The immutable parent and existing ZIP/v3 manifest/v1-v2 inventory
+contracts are unchanged; raw resume receipts remain private. No HTML
+response-body skipping or stronger rendered-freshness claim is enabled.
+With no `--resume-work`, updates behave as before.
 
 **Page HTML remains a conservative full refresh; binary asset bodies
 can be reused with fresh version evidence.** The producer first verifies

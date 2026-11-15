@@ -95,9 +95,46 @@ Agents start with [AGENTS.md](../AGENTS.md).
   `reusedRevisionCount` across resumed history parents without claiming
   new network downloads as reused. History identity/association
   verification, immutable parent lineage and all-or-nothing publication
-  remain unchanged. New current-HTML refresh resume requires separate
-  RecentChanges/asset-version evidence checkpointing in P2.5b; history
-  resume does not imply that `--update-from --resume-work` works.
+  remain unchanged. Current refresh resume is independently implemented
+  under P2.5b and shares the parent-bound private receipt protocol.
+- P2.5b current-update resume accepts `--update-from --resume-work`
+  only with the exact independently verified parent triple and an existing
+  `.wiki-archive-run.json` receipt for operation `current-refresh`,
+  site, language and options (require-history, historical-only, replay).
+  The receipt is committed before the RecentChanges scan. The complete
+  scan is saved atomically to `.wiki-update-recentchanges.json` with exact
+  parent/child requested observation boundaries; on resume it is parsed
+  with bounded IDs, event timestamps and retention explicitly unverified.
+  If a crawl checkpoint exists but the scan sidecar is missing or invalid,
+  fail before network. The existing P0 crawl checkpoint persists the
+  allpages continuation token, fetched URL queue, saved files and failures.
+  Resuming validates committed HTML rewrite hashes, original source-HTML
+  replay SHA-256 (if selected), and asset bytes before making another
+  request; it never treats a recorded size alone as a secure byte identity.
+  Each asset fetch writes an atomic private, URL-keyed decision before the
+  crawler writes its file: selected response-body SHA-256, path/size,
+  optional MediaWiki upload metadata and conditional 304 reuse flag.
+  The asset decision is trusted only when the currently saved file hash
+  matches, and conditional validation is independently corroborated with
+  the private HTTP asset source evidence and the verified parent's strong
+  ETag/version. Upload reuse rechecks the saved SHA-1/size and exact
+  parent member; saved upload and conditional counts are reconstructed
+  from completed records, not transient Python sets.
+  Complete `.wiki-current-revisions.json` and
+  `.wiki-page-relationships.json` observations are reusable only if
+  their exact URL, path, page ID and earlier HTML fetch time still match
+  all completed current pages. Missing observations are fetched; stale or
+  partially contradictory sidecars fail, rather than being silently
+  promoted. History updates retain their already committed oldid
+  checkpoints and parent reuse log; v2 historical-only/reinstatement
+  rules still apply. Existing archived retired-page and missing-oldid
+  files are checked against verified parent bytes on resume rather
+  than silently overwritten.
+  Private run/scan/asset evidence never enters published ZIPs. Cleanup
+  occurs only on success; source interruptions or verification errors
+  leave work inspectable with no resulting archive, manifest or inventory.
+  Parent snapshots are never modified. This is resumability, not a
+  dependency-fresh HTML/atomic source-time guarantee.
 - For the P2.1 non-history-to-history upgrade, accept only an independently
   verified ZIP/v3 manifest/v1 inventory triple with all original members
   explicitly classified as current pages or assets. Work in a newly created

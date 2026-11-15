@@ -2115,9 +2115,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resume-work",
         type=Path,
         help=(
-            "Resume a preserved ordinary crawl or archive-derived history "
-            "upgrade. For --from-snapshot, the work receipt must match the "
-            "exact parent archive/manifest/inventory before any network access."
+            "Resume a preserved ordinary crawl, --from-snapshot history "
+            "upgrade, or --update-from refresh. Archive-derived work must "
+            "match the exact parent ZIP/manifest/inventory and acquisition options."
         ),
     )
     parser.add_argument(
@@ -2140,11 +2140,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.update_from is not None:
-        if (args.from_snapshot is not None
-                or args.retry_failed_only or args.resume_work is not None):
+        if (args.from_snapshot is not None or args.retry_failed_only):
             print(
-                "ERROR: --update-from cannot be combined with --from-snapshot, "
-                "--retry-failed-only or --resume-work",
+                "ERROR: --update-from cannot be combined with --from-snapshot "
+                "or --retry-failed-only",
                 file=sys.stderr,
             )
             return 1
@@ -2171,6 +2170,8 @@ def main(argv: list[str] | None = None) -> int:
                 allow_historical_only=args.allow_historical_only,
                 **({"source_replay_directory": args.source_replay_dir}
                    if args.source_replay_dir is not None else {}),
+                **({"resume_work": args.resume_work}
+                   if args.resume_work is not None else {}),
             )
         except SnapshotUpdateIncomplete as exc:
             print(f"ERROR: {exc}", file=sys.stderr)

@@ -134,7 +134,11 @@ def refresh_history_from_parent(
                 )
             allowed.setdefault(oldid, set()).add(new_url)
 
-    reused_oldids: set[int] = set()
+    from infinity_wiki_acquisition.archive_run import (
+        record_parent_oldid_reuse, restored_parent_oldid_reuse,
+    )
+
+    reused_oldids: set[int] = restored_parent_oldid_reuse(work, old_records)
     former: list[dict[str, Any]] = []
     former_files: list[Path] = []
     with zipfile.ZipFile(source_archive) as old_zip:
@@ -179,6 +183,7 @@ def refresh_history_from_parent(
                     or hashlib.sha256(content).hexdigest() != old["sha256"]):
                 raise ValueError(f"Reused oldid {oldid} content differs")
             reused_oldids.add(oldid)
+            record_parent_oldid_reuse(work, oldid, old["sha256"])
             return content
 
         if progress is None:
@@ -246,15 +251,20 @@ def refresh_history_from_parent(
                 prior = old_records[oldid]
                 relative = prior["path"]
                 target = work.joinpath(*relative.split("/"))
-                if target.exists():
-                    raise ValueError("Oldid path collides with newly acquired history")
                 target.parent.mkdir(parents=True, exist_ok=True)
                 contents = old_zip.read(relative)
                 if len(contents) != prior["size"] or hashlib.sha256(
                     contents,
                 ).hexdigest() != prior["sha256"]:
                     raise ValueError(f"Historical oldid {oldid} bytes changed")
-                target.write_bytes(contents)
+                if target.exists() or target.is_symlink():
+                    if (target.is_symlink() or not target.is_file()
+                            or target.read_bytes() != contents):
+                        raise ValueError(
+                            "Saved historical-only oldid differs from verified parent"
+                        )
+                else:
+                    target.write_bytes(contents)
                 reused_oldids.add(oldid)
         index = build_historical_only_index(index, former)
         target_index = work / "_history/index.json"

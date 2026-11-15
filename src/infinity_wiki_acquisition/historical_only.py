@@ -131,7 +131,12 @@ def archived_former_pages(
                 raise ValueError("Prior historical-only bytes changed")
             destination = work.joinpath(*entry["archivedPath"].split("/"))
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(contents)
+            if destination.exists() or destination.is_symlink():
+                if (destination.is_symlink() or not destination.is_file()
+                        or destination.read_bytes() != contents):
+                    raise ValueError("Saved historical-only page differs from verified parent")
+            else:
+                destination.write_bytes(contents)
             files.append(destination)
             former.append(entry)
             oldids.update(revision["oldid"] for revision in entry["revisions"])
@@ -155,7 +160,12 @@ def archived_former_pages(
                 raise ValueError("Parent current-page bytes changed")
             destination = work.joinpath(*relative.split("/"))
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(contents)
+            if destination.exists() or destination.is_symlink():
+                if (destination.is_symlink() or not destination.is_file()
+                        or destination.read_bytes() != contents):
+                    raise ValueError("Saved retired current page differs from verified parent")
+            else:
+                destination.write_bytes(contents)
             files.append(destination)
             observed_at = parent["captureMetadata"].get(
                 "currentContentAcquiredAt", parent["snapshot"]["acquiredAt"],

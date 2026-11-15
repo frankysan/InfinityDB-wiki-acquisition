@@ -47,6 +47,16 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.5b archive-derived current-refresh resume with
+  `--update-from --resume-work`. Parent-bound private evidence keeps the
+  exact RecentChanges window, allpages continuation and crawl queue,
+  source-body/rewrite hashes and asset HTTP/imageinfo reuse decisions across
+  interruptions. Post-crawl current revision/relationship observations,
+  history oldid checkpoints and v2 historical-only content are reconciled
+  without re-downloading completed work. Tests cover corrupt evidence,
+  interrupted enumeration, network failures, reused original uploads and
+  HTTP 304 assets. Previously published snapshot contracts and complete
+  HTML fetching remain unchanged.
 - **Acquisition:** Added P2.5a resumable history-only archive upgrades through
   `--from-snapshot --include-history --resume-work`. Private receipts bind
   interrupted work to the exact verified parent ZIP/manifest/inventory,
