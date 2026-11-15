@@ -47,6 +47,13 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.4c.2a per-current-page HTTP representation and
+  HTML transformation provenance in optional inventory fields: observed
+  status/URL, ETag/Last-Modified, source/rewritten hashes, configured request
+  variant and implementation fingerprint. Strong validators are only recorded
+  for exact-URL HTTP 200 responses; independent ZIP/member checks reject
+  misattributed or forged reuse claims. Original HTML is not retained
+  by existing archives, so no download skipping is enabled.
 - **Acquisition:** Added P2.4c.1 independently checked rendered-HTML reuse
   rejection decisions to updated snapshot inventories. Each current page
   carries explicit missing proofs and observed invalidation risks, including

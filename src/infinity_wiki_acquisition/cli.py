@@ -1845,7 +1845,8 @@ def download_wiki(
             or page_title_from_url(url, language=language, site=site),
         )
         rewritten_text = rewrite_html_links(text, url, language=language, site=site)
-        write_bytes(target, rewritten_text.encode("utf-8"))
+        rewritten_bytes = rewritten_text.encode("utf-8")
+        write_bytes(target, rewritten_bytes)
         saved_records[url] = [relative, target.stat().st_size]
 
         if existing_checkpoint and old_asset != asset:
@@ -1868,6 +1869,15 @@ def download_wiki(
                 payload=payload,
                 parser=parser,
                 site=site,
+            )
+            from infinity_wiki_acquisition.rendered_response import (
+                capture_rendered_response,
+            )
+
+            evidence["renderedResponseVersion"] = capture_rendered_response(
+                url=url, path=relative, payload=payload,
+                rewritten=rewritten_bytes, fetched_at=evidence["fetchedAt"],
+                site=site, language=language,
             )
             write_page_evidence(destination, url, evidence)
         for link in parser.links:

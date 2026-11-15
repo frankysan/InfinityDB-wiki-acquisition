@@ -326,6 +326,29 @@ contract, and proven equivalence of offline link rewriting before skipping
 any HTML response body. This stage does **not** reduce HTML downloads or
 change inventory v1/v2, ZIP, history or v3 provenance formats.
 
+**Rendered response identity preparation (P2.4c.2a):** Freshly retrieved
+HTML now records an optional `renderedResponseVersion` on each current
+page, with its original-response SHA-256, the independently checkable
+rewritten ZIP-member hash, request URL, observed effective URL/status,
+ETag and Last-Modified, acquisition time and configured HTTP request
+variant. A strong ETag is retained for future conditional checks only
+when it came with HTTP 200 at the *same* requested URL. The rewrite
+profile includes fingerprints of the installed producer and path
+sanitizer source, the Python version, and the transformation identity.
+Missing, weak or redirected HTTP metadata never becomes a strong
+validator. The verifier checks these values against published member
+identities, hashes and other acquisition timestamps.
+
+This evidence still does **not** provide a reusable source body: the
+original HTTP HTML is not in the archive, and the current source
+reference inventory deliberately omits ordinary navigation links.
+The original body hash cannot be independently replayed from the ZIP,
+so the evidence is **not** proof of an identical offline rewrite,
+a source-side signature, or permission to skip the next HTML fetch.
+The negative P2.4c.1 gate, full rediscovery and refetch behavior remain
+unchanged. Older v1/v2 inventories and existing history associations
+remain compatible.
+
 ### Refresh a history-enabled snapshot (P2.3c.1)
 
 `--update-from` now also accepts a complete history-enabled parent. It

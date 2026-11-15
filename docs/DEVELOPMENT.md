@@ -302,6 +302,35 @@ Agents start with [AGENTS.md](../AGENTS.md).
   dependency/category/index contract, and byte-equivalent or replayable
   offline rewrites before authorizing a skipped body.
 
+  P2.4c.2a now captures source-response and configured rewrite-profile
+  observations in the optional per-current-page `renderedResponseVersion`.
+  It records original-body and mirrored-member SHA-256, original request
+  URL/path/time, HTTP status/effective URL/ETag/Last-Modified and the exact
+  configured Accept/Accept-Language/User-Agent values. The implementation
+  fingerprints the installed `cli.py` and `path_sanitization.py` bytes
+  and Python major/minor version, with memoized source hashes for large
+  crawls. Only an observed HTTP 200 at the unchanged request URL and an
+  actual strong ETag produces `strongEtag`; missing/weak/redirect metadata
+  is retained as weaker source observations, not promoted. A 304 returned
+  during an unconditional HTML fetch fails closed. The producer binds the
+  original byte hash to its fetched HTML before rewrite and the mirrored
+  hash to the ZIP member. `verify_snapshot` independently checks the
+  member binding, status, strong ETag semantics, profile structure,
+  page-ID member URL/path and matching HTML timestamps in revision and
+  API relationship observations. The raw HTTP body is *not* archived,
+  so its claimed hash is not independently replayable from the output.
+  Fingerprints are observational, not signatures or proof that an external
+  source returned particular bytes. Historic current-page members retain
+  their original acquisition evidence; historical-only pages/oldids do
+  not acquire new current-response claims.
+
+  P2.4c.2b must establish a portable original-body or complete discovery
+  reference representation (normal navigation links are not in source
+  inventory), plus independently checked HTTP conditional revalidation,
+  deterministic rewrite replay and full publication/resume compatibility.
+  A matching recorded strong ETag alone is insufficient. Do not
+  conditionally skip HTML yet.
+
   Stronger freshness assurance still requires a source-side render/dependency
   identity, verified change horizon and coherent source-time observations.
 

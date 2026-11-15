@@ -270,6 +270,10 @@ def build_snapshot_inventory(
                         "module": "unknown",
                     },
                 }
+                if evidence is not None and "renderedResponseVersion" in evidence:
+                    entry["renderedResponseVersion"] = evidence[
+                        "renderedResponseVersion"
+                    ]
                 if current_revisions is not None:
                     revision = current_revisions.get(url)
                     if (revision is None

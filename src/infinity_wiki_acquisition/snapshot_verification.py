@@ -94,8 +94,9 @@ def _member_metadata(
              f"Representation/kind mismatch at {path}")
     urls = _url_list(member.get("sourceUrls"), f"{path}.sourceUrls")
     if kind != "current-page":
-        _require("pageRelationships" not in member,
-                 f"Only current pages may have relationship observations: {path}")
+        _require("pageRelationships" not in member
+                 and "renderedResponseVersion" not in member,
+                 f"Only current pages may have HTTP response observations: {path}")
     if kind == "generated-index":
         _require(history and path == "_history/index.json" and not urls,
                  f"Invalid generated index at {path}")
@@ -156,7 +157,27 @@ def _member_metadata(
         target = identity.get("httpRedirectTarget")
         _require(identity.get("httpRedirectVerified") is bool(target),
                  f"Contradictory HTTP redirect evidence at {path}")
+        rendered_response = member.get("renderedResponseVersion")
+        if rendered_response is not None:
+            from infinity_wiki_acquisition.rendered_response import (
+                validate_rendered_response,
+            )
+
+            try:
+                validate_rendered_response(
+                    rendered_response, member=member,
+                    site=site, language=language,
+                )
+            except ValueError as exc:
+                raise SnapshotVerificationError(
+                    f"Invalid rendered HTML response version at {path}: {exc}"
+                ) from exc
         current = member.get("currentRevision")
+        if rendered_response is not None and current is not None:
+            _require(
+                rendered_response["htmlFetchedAt"] == current["htmlFetchedAt"],
+                f"Rendered response time contradicts revision observation: {path}",
+            )
         if current is not None:
             from infinity_wiki_acquisition.current_revisions import (
                 _same_title, validate_current_revision_record,
@@ -178,6 +199,11 @@ def _member_metadata(
                 _require(_same_title(current["apiTitle"], expected_title),
                          f"Current revision API title contradicts page URL: {path}")
         relationship = member.get("pageRelationships")
+        if rendered_response is not None and relationship is not None:
+            _require(
+                rendered_response["htmlFetchedAt"] == relationship["htmlFetchedAt"],
+                f"Rendered response time contradicts relationship observation: {path}",
+            )
         if relationship is not None:
             from infinity_wiki_acquisition.page_relationships import (
                 validate_page_relationship,

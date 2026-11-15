@@ -601,6 +601,17 @@ def test_history_upgrade_retains_verified_update_relationship_evidence(
         if member["kind"] == "current-page"
     }
     assert after == before
+    original_response_versions = {
+        member["path"]: member["renderedResponseVersion"]
+        for member in original["members"]
+        if member["kind"] == "current-page"
+    }
+    inherited_response_versions = {
+        member["path"]: member["renderedResponseVersion"]
+        for member in document["members"]
+        if member["kind"] == "current-page"
+    }
+    assert inherited_response_versions == original_response_versions
     assert document["history"] is True
     assert sum(member["kind"] == "revision" for member in document["members"]) == 3
     capture["inheritedCurrentUpdateEvidence"]["renderInvalidation"][

@@ -89,6 +89,11 @@ def test_opt_in_retains_deleted_html_and_revision_under_v2_not_current(
         if member["kind"] == "historical-page"
     ]
     assert len(former) == 1
+    assert "renderedResponseVersion" not in former[0]
+    assert all(
+        "renderedResponseVersion" not in item
+        for item in checked["members"] if item["kind"] == "revision"
+    )
     assert former[0]["formerPage"]["formerUrl"] == DELETED
     assert former[0]["formerPage"]["originalPath"] == "Deleted_Page.html"
     oldid = next(
