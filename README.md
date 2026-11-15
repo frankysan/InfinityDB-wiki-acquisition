@@ -153,8 +153,9 @@ but `--resume-work` and `--retry-failed-only` cannot be combined with
 
 ### Refresh a completed current-content snapshot (P2.3a–b)
 
-A verified **non-history** ZIP with matching v3 provenance and v1 inventory
-can now seed a separate current-content refresh:
+A verified ZIP with matching v3 provenance and v1 inventory can seed
+a separate current-content refresh. If the parent includes historical
+oldids, the update automatically retains history:
 
 ```powershell
 infinity-wiki-snapshot --update-from "local/data/wiki/HUMAN-SPHERE 20261001-120000.zip"
@@ -164,8 +165,11 @@ As with `--from-snapshot`, the default parent JSON paths are resolved below
 `--manifest-dir`; `--from-manifest` and `--from-inventory` override those
 inputs. The source site/language are inferred and explicit mismatches fail
 before any network requests. `--update-from` cannot be combined with
-`--include-history`, `--from-snapshot`, `--resume-work`, or
-`--retry-failed-only`. History-parent updates are not yet supported.
+`--from-snapshot`, `--resume-work`, or `--retry-failed-only`.
+The optional `--include-history` is accepted
+only when the parent already contains history; without it, history is
+preserved automatically whenever present. Adding history to a
+non-history archive still uses `--from-snapshot --include-history`.
 
 **Page HTML remains a conservative full refresh; binary asset bodies
 can be reused with fresh version evidence.** The producer first verifies
@@ -259,8 +263,34 @@ Therefore pages remain fully fetched, and no unchanged revision ID
 certifies the previously rendered content. Future dependency-aware
 verification (P2.4) is required before making stronger claims.
 
-Refreshing history-enabled parents and resuming interrupted derived
-runs remain outstanding.
+### Refresh a history-enabled snapshot (P2.3c.1)
+
+`--update-from` now also accepts a complete history-enabled parent. It
+performs the normal fresh allpages/current-page/asset acquisition, then
+re-enumerates revisions for the **new** current-page set and rebuilds the
+history index. Previously downloaded oldid bytes are reused only when
+their revision ID, parent revision ID and timestamp match a newly
+enumerated revision, and the old page association maps to the new URL
+through a stable numeric MediaWiki page ID. A renamed canonical title,
+a corroborated move or several prior URLs converging onto one identity
+do not by themselves force historical bytes to be downloaded again.
+New revisions are fetched and included; all prior oldids and archived
+page/oldid associations must still be accounted for after remapping.
+
+The new inventory records old and new page URLs with the matching page
+ID, the number of reused and newly enumerated revisions and the full
+parent artifact lineage. History-index metadata is always rebuilt, not
+blindly copied, and current HTML is still refreshed.
+
+**Deleted or inaccessible historical pages are deliberately not
+published as current pages.** When a parent page ID cannot be
+re-established in fresh discovery, or any earlier oldid/association is
+missing or contradictory, the operation stops without publishing a ZIP,
+manifest or inventory. The prior snapshot remains available and the
+staging work is retained. A *historical-only page/tombstone* representation
+needs explicit schema and downstream consumer review before such
+updates can be published (remaining P2.3c.2). Archive-derived resume
+remains P2.5.
 
 ### Resume historical revisions
 

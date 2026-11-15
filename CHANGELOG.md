@@ -47,6 +47,16 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.3c.1 history-preserving `--update-from`
+  updates. History-enabled parents now trigger fresh page/asset
+  acquisition and complete revision re-enumeration. Oldid bytes are
+  reused only after matching historical revision identities and stable
+  MediaWiki page-ID mappings; confirmed moves and aliases that converge
+  onto one current page are represented in the new index and parent
+  lineage. Missing historical pages, revision identities or
+  associations block publication rather than silently stripping
+  history. Historical-only/deleted-page publication remains a
+  separately tracked schema/consumer decision.
 - **Acquisition:** Completed P2.3b.4 source-time and coverage reconciliation
   with optional, independently verified `sourceTimeCoverage` in v1
   inventories. Summaries count unknown current revisions, missing HTML

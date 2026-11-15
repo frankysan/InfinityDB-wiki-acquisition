@@ -22,9 +22,12 @@ from infinity_wiki_acquisition.crawl_checkpoint import (
     CHECKPOINT_FILENAME, read_crawl_checkpoint,
 )
 from infinity_wiki_acquisition.snapshot_inventory import build_snapshot_inventory
+from infinity_wiki_acquisition.snapshot_upgrade import (
+    _parent_revision_records, _publish_verified_inventory,
+    SnapshotUpgradeIncomplete,
+)
 from infinity_wiki_acquisition.source_time_coverage import assess_source_time_coverage
 from infinity_wiki_acquisition.snapshot_provenance import sha256_file, write_snapshot_manifest
-from infinity_wiki_acquisition.snapshot_upgrade import _publish_verified_inventory
 from infinity_wiki_acquisition.snapshot_verification import verify_snapshot
 
 
@@ -49,15 +52,12 @@ class SnapshotUpdateResult(NamedTuple):
     new_members: int
     removed_members: int
     moved_pages: int
+    history_revisions: int = 0
+    reused_revisions: int = 0
 
 
 def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Require a classified source set; avoid interpreting unknown members."""
-    if parent["history"]:
-        raise ValueError(
-            "--update-from currently accepts non-history parents only; "
-            "history-preserving updates need explicit reconciliation"
-        )
     if parent["captureMetadata"].get("legacyIndexed") is True:
         raise ValueError(
             "--update-from needs original source URL evidence; "
@@ -66,6 +66,10 @@ def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
     known: dict[str, dict[str, Any]] = {}
     for member in parent["members"]:
         if member["kind"] not in {"current-page", "asset"}:
+            if parent["history"] and member["kind"] in {
+                "revision", "generated-index",
+            }:
+                continue
             raise ValueError(
                 f"Unclassified member cannot be updated safely: {member['path']}"
             )
@@ -193,38 +197,52 @@ def _page_changes(
     recent_events: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Compare allpages IDs; annotate moves only when a log corroborates them."""
-    def id_map(document: dict[str, Any]) -> dict[int, dict[str, Any]]:
-        ids: dict[int, dict[str, Any]] = {}
+    def id_map(document: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+        ids: dict[int, list[dict[str, Any]]] = {}
         for member in document["members"]:
             if member["kind"] != "current-page":
                 continue
             page_id = member["sourceIdentity"].get("pageId")
-            if page_id is None:
-                continue
-            if page_id in ids and ids[page_id]["page"]["url"] != member["page"]["url"]:
-                raise ValueError(f"Multiple current pages claim MediaWiki ID {page_id}")
-            ids[page_id] = member
+            if page_id is not None:
+                # Several page URLs can deliberately refer to the same
+                # MediaWiki identity (P2.2 aliases). Preserve all URL
+                # associations rather than silently choosing one.
+                ids.setdefault(page_id, []).append(member)
         return ids
 
     before = id_map(parent)
     after = id_map(updated)
     moved = []
     disappeared = []
-    for page_id, member in sorted(before.items()):
-        current = after.get(page_id)
-        if current is None:
-            disappeared.append({
-                "pageId": page_id,
-                "oldUrl": member["page"]["url"],
-                "oldPath": member["path"],
-                "status": "absent-from-current-enumeration",
-            })
-        elif (current["page"]["url"], current["path"]) != (
-            member["page"]["url"], member["path"],
-        ):
-            def normalize(title: str) -> str:
-                return title.replace("_", " ").casefold()
 
+    def normalize(title: str) -> str:
+        return title.replace("_", " ").casefold()
+
+    for page_id, old_members in sorted(before.items()):
+        fresh_members = after.get(page_id, [])
+        for member in old_members:
+            if not fresh_members:
+                disappeared.append({
+                    "pageId": page_id,
+                    "oldUrl": member["page"]["url"],
+                    "oldPath": member["path"],
+                    "status": "absent-from-current-enumeration",
+                })
+                continue
+            if any(
+                (item["page"]["url"], item["path"]) ==
+                (member["page"]["url"], member["path"])
+                for item in fresh_members
+            ):
+                continue
+            same_url = next(
+                (item for item in fresh_members
+                 if item["page"]["url"] == member["page"]["url"]),
+                None,
+            )
+            current = same_url or sorted(
+                fresh_members, key=lambda item: item["page"]["url"],
+            )[0]
             corroborated = any(
                 event.get("type") == "log"
                 and event.get("logtype") == "move"
@@ -241,7 +259,8 @@ def _page_changes(
                 "newPath": current["path"],
                 "interpretation": (
                     "move-corroborated-by-recentchanges"
-                    if corroborated else "unresolved-url-association"
+                    if corroborated and len(fresh_members) == 1
+                    else "unresolved-url-association"
                 ),
             })
     return moved, disappeared
@@ -259,6 +278,7 @@ def update_snapshot(
     expected_site: str | None = None,
     expected_language: str | None = None,
     progress: Any = None,
+    require_history: bool = False,
 ) -> SnapshotUpdateResult:
     """Refresh current content and publish a new independently verified snapshot.
 
@@ -270,6 +290,10 @@ def update_snapshot(
     from infinity_wiki_acquisition import cli
 
     parent = verify_snapshot(source_archive, source_manifest, source_inventory)
+    if require_history and not parent["history"]:
+        raise ValueError(
+            "--include-history with --update-from requires a history-enabled parent"
+        )
     previous_by_url = _parent_sources(parent)
     site = cli.WIKI_SITES[parent["site"]]
     language = parent["language"]
@@ -295,7 +319,7 @@ def update_snapshot(
     )
     work = cli.create_wiki_work_directory(
         work_root, site=site, language=language, now=acquired_at,
-        include_history=False,
+        include_history=parent["history"],
     )
     archive: Path | None = None
     manifest: Path | None = None
@@ -459,9 +483,28 @@ def update_snapshot(
                     reused_paths.add(saved[0])
 
         files = list(fresh.files)
+        history_result = None
+        oldids_reused: set[int] = set()
+        history_mappings: list[dict[str, Any]] = []
+        if parent["history"]:
+            from infinity_wiki_acquisition.history_refresh import (
+                refresh_history_from_parent,
+            )
+
+            try:
+                history_result, oldids_reused, history_mappings = (
+                    refresh_history_from_parent(
+                        parent, source_archive, tuple(fresh.pages),
+                        state["pageIds"], work, site=site, language=language,
+                    )
+                )
+            except SnapshotUpgradeIncomplete as exc:
+                raise SnapshotUpdateIncomplete(work, exc.failures) from exc
+            files.extend(history_result.files)
         archive = cli.archive_wiki(
             files, archive_directory, root=work, site=site,
-            language=language, now=acquired_at,
+            language=language, include_history=parent["history"],
+            now=acquired_at,
         )
         manifest = write_snapshot_manifest(
             archive, manifest_directory, snapshot_type="wiki",
@@ -472,7 +515,7 @@ def update_snapshot(
         updated = build_snapshot_inventory(
             archive, manifest, work=work, site=site.key,
             language=language, root_url=site.root_urls[language],
-            include_history=False, pages=fresh.pages,
+            include_history=parent["history"], pages=fresh.pages,
             crawl_checkpoint=work / CHECKPOINT_FILENAME,
         )
         saved_uploads: set[str] = set()
@@ -501,6 +544,10 @@ def update_snapshot(
         old_paths = set(old_members_by_path)
         new_paths = {item["path"] for item in updated["members"]}
         matched = reused_paths & new_paths
+        matched.update(
+            f"_history/oldid/{oldid}.html"
+            for oldid in oldids_reused
+        )
         changed = (new_paths & old_paths) - matched
         added = new_paths - old_paths
         removed = old_paths - new_paths
@@ -577,6 +624,16 @@ def update_snapshot(
             "parentPageIdsAbsentFromEnumeration": absent,
             "currentRevisionComparisons": revision_transitions,
             "recentChanges": changes,
+            **({
+                "historyRefresh": {
+                    "sourceOldidCount": len(_parent_revision_records(parent)),
+                    "reusedOldidCount": len(oldids_reused),
+                    "freshOldidCount": history_result.revision_count,
+                    "pageMappings": history_mappings,
+                    "historyCutoff": "all-observed",
+                    "historyRetrievedAt": acquired_at.isoformat(timespec="seconds"),
+                }
+            } if history_result is not None else {}),
             "sourceTimeCoverage": assess_source_time_coverage(
                 updated["members"], recent_changes=changes,
                 page_moves=moved, absent_page_ids=absent,
@@ -610,4 +667,6 @@ def update_snapshot(
     return SnapshotUpdateResult(
         archive, manifest, inventory, len(matched), len(changed),
         len(added), len(removed), len(moved),
+        history_result.revision_count if history_result is not None else 0,
+        len(oldids_reused),
     )

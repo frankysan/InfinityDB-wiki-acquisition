@@ -132,9 +132,10 @@ Agents start with [AGENTS.md](../AGENTS.md).
   claims. Record observed edit/move/delete/upload changes separately and
   refuse to present an exhausted RecentChanges window as proven retention
   coverage. New output retains the existing immutable ZIP/v3 manifest/v1
-  inventory contract, explicit `inputArtifact` and parent hashes. This
-  initial baseline does not update history parents, support interrupted
-  derived resume, or prove template-dependent render freshness.
+  inventory contract, explicit `inputArtifact` and parent hashes.
+  This was the initial non-history baseline; P2.3c.1 now extends
+  updates to verified history parents. Interrupted derived resume and
+  template-dependent render freshness remain outside this baseline.
 - The first P2.3b improvement records optional original asset HTTP
   `sourceVersion` evidence bound to a source URL and archived member SHA-256.
   Unredirected HTTP 200 responses may retain **strong** ETags in private
@@ -227,6 +228,30 @@ Agents start with [AGENTS.md](../AGENTS.md).
   invalidation, all rendered HTML continues to be refetched and snapshots
   remain evidence collected across multiple requests rather than an atomic
   remote state. Existing ZIP/v3 manifest/older v1 inventories remain valid.
+
+- P2.3c.1 allows `--update-from` to refresh a verified history parent.
+  Keep the current page/asset recrawl, imageinfo/ETag reuse and private
+  checkpoint behavior unchanged, but run the checkpointed history
+  downloader against the **fresh current-page set** before publication.
+  Only accept oldid reuse after parent oldid/parentid/timestamp agree with
+  newly enumerated history and a verified old-to-new page association.
+  Map previous/current URLs using stable numeric MediaWiki page IDs
+  observed in the original and fresh allpages evidence. A changed title
+  alone does not invalidate history. Several old alias URLs may converge
+  on one current page ID: retain each mapping in
+  `captureMetadata.historyRefresh.pageMappings`, with new oldid
+  association metadata rebuilt from the fresh index. Require all
+  originally archived oldids and page/oldid associations to survive the
+  mapping; refuse conflicting identities or missing oldids. The v1
+  inventory also records parent/fresh oldid counts, reused oldid count
+  and `historyCutoff: all-observed`, cross-checked by the independent
+  verifier. The previous complete ZIP/manifest/inventory remain immutable.
+  If an earlier page's numeric ID cannot be found in fresh discovery,
+  refuse publication: a deleted/unavailable title cannot be quietly
+  omitted or represented as a current page with stale HTML. A properly
+  typed historical-only page and matching history index semantics still
+  require schema/consumer review (P2.3c.2). Failed staging remains
+  available; restarting it is deferred to P2.5.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

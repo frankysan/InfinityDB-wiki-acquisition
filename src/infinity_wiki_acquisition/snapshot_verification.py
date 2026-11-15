@@ -336,6 +336,7 @@ def verify_snapshot(
                 "verified-full-source-refresh", "conditional-asset-refresh",
                 "verified-asset-version-refresh",
             }:
+                history_refresh = metadata.get("historyRefresh")
                 if mode in {
                     "conditional-asset-refresh", "verified-asset-version-refresh",
                 }:
@@ -349,7 +350,7 @@ def verify_snapshot(
                         if mode == "verified-asset-version-refresh" else 0
                     )
                     _require(
-                        document["history"] is False
+                        document["history"] is (history_refresh is not None)
                         and type(conditional_count) is int
                         and type(upload_reuse) is int
                         and type(upload_evidence) is int
@@ -495,6 +496,43 @@ def verify_snapshot(
                              and start_time <= timestamp <= end_time,
                              "Invalid RecentChanges event evidence")
                     event_ids.add(rcid)
+                if history_refresh is not None:
+                    history_refresh = _object(history_refresh, "historyRefresh")
+                    _require(set(history_refresh) == {
+                        "sourceOldidCount", "reusedOldidCount",
+                        "freshOldidCount", "pageMappings", "historyCutoff",
+                        "historyRetrievedAt",
+                    }, "Unsupported historical refresh metadata")
+                    _require(
+                        history_refresh["historyCutoff"] == "all-observed"
+                        and type(history_refresh["sourceOldidCount"]) is int
+                        and history_refresh["sourceOldidCount"] > 0
+                        and type(history_refresh["reusedOldidCount"]) is int
+                        and 0 <= history_refresh["reusedOldidCount"]
+                        <= history_refresh["sourceOldidCount"]
+                        and history_refresh["reusedOldidCount"]
+                        <= parent["reusedMemberCount"]
+                        and type(history_refresh["freshOldidCount"]) is int
+                        and history_refresh["freshOldidCount"]
+                        >= history_refresh["sourceOldidCount"]
+                        and isinstance(history_refresh["pageMappings"], list)
+                        and bool(history_refresh["pageMappings"]),
+                        "History refresh cannot claim incomplete oldid coverage",
+                    )
+                    historical_at = datetime.fromisoformat(
+                        _string(
+                            history_refresh["historyRetrievedAt"],
+                            "historyRefresh.historyRetrievedAt",
+                        ).replace("Z", "+00:00")
+                    )
+                    _require(
+                        historical_at.tzinfo is not None
+                        and historical_at.utcoffset() is not None
+                        and historical_at <= datetime.fromisoformat(
+                            record["acquiredAt"],
+                        ),
+                        "History refresh retrieval is after snapshot publication",
+                    )
                 parent_time = datetime.fromisoformat(parent["acquiredAt"])
                 current_time = datetime.fromisoformat(record["acquiredAt"])
                 _require(parent_time.tzinfo is not None
@@ -658,6 +696,45 @@ def verify_snapshot(
                     site=site, language=language,
                 )
 
+            history_refresh = document["captureMetadata"].get("historyRefresh")
+            if history_refresh is not None:
+                current_by_url = {
+                    item["page"]["url"]: item
+                    for item in entries.values()
+                    if item["kind"] == "current-page"
+                }
+                page_mappings = history_refresh["pageMappings"]
+                previous_urls: set[str] = set()
+                for mapping in page_mappings:
+                    _require(
+                        isinstance(mapping, dict)
+                        and set(mapping) == {
+                            "pageId", "previousUrl", "currentUrl",
+                            "identityBasis", "changedUrl",
+                        }, "Malformed historical page mapping")
+                    prior_url = mapping["previousUrl"]
+                    new_url = mapping["currentUrl"]
+                    current_member = current_by_url.get(new_url)
+                    _require(
+                        isinstance(prior_url, str)
+                        and prior_url not in previous_urls
+                        and current_member is not None
+                        and type(mapping["pageId"]) is int
+                        and mapping["pageId"] > 0
+                        and current_member["sourceIdentity"]["pageId"]
+                        == mapping["pageId"]
+                        and mapping["identityBasis"]
+                        == "verified-allpages-page-id"
+                        and mapping["changedUrl"] is (prior_url != new_url),
+                        "Historical page mapping contradicts current identity",
+                    )
+                    previous_urls.add(prior_url)
+                _require(
+                    history_refresh["freshOldidCount"] ==
+                    sum(item["kind"] == "revision"
+                        for item in entries.values()),
+                    "Historical refresh member/index coverage mismatch",
+                )
             conditional_count = sum(
                 1 for item in entries.values()
                 if item.get("kind") == "asset"

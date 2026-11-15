@@ -153,7 +153,16 @@ def test_source_evidence_survives_resume_and_is_not_in_zip(
     # The crawl checkpoint is periodic: the most recent uncommitted
     # attempts may be replayed, but source evidence remains consistent.
     assert calls.count(root) == 2
-    assert read_page_evidence(tmp_path, root, path="Main_Page.html") == evidence
+    replayed = read_page_evidence(tmp_path, root, path="Main_Page.html")
+    assert replayed is not None
+    # A replay is a fresh HTTP observation: all stable evidence remains
+    # identical, but its fetchedAt timestamp may advance across seconds.
+    assert {
+        key: value for key, value in replayed.items() if key != "fetchedAt"
+    } == {
+        key: value for key, value in evidence.items() if key != "fetchedAt"
+    }
+    assert replayed["fetchedAt"] >= evidence["fetchedAt"]
 
 
 def test_allpages_page_ids_are_independent_and_invalid_ids_fail(

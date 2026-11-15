@@ -2023,9 +2023,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--update-from",
         type=Path,
         help=(
-            "Conservatively refresh a verified non-history snapshot: full "
-            "main-namespace discovery and HTTP fetches, then compare and "
-            "reuse byte-identical members; not yet network-incremental"
+            "Refresh a verified snapshot with new current pages/assets; "
+            "history-enabled parents retain and reconcile all oldid history. "
+            "Missing/deleted historical page identities block publication."
         ),
     )
     parser.add_argument(
@@ -2069,11 +2069,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.update_from is not None:
-        if (args.from_snapshot is not None or args.include_history
+        if (args.from_snapshot is not None
                 or args.retry_failed_only or args.resume_work is not None):
             print(
                 "ERROR: --update-from cannot be combined with --from-snapshot, "
-                "--include-history, --retry-failed-only or --resume-work",
+                "--retry-failed-only or --resume-work",
                 file=sys.stderr,
             )
             return 1
@@ -2096,6 +2096,7 @@ def main(argv: list[str] | None = None) -> int:
                 manifest_directory=args.manifest_dir,
                 work_root=args.work_root,
                 expected_site=args.site, expected_language=args.language,
+                require_history=args.include_history,
             )
         except SnapshotUpdateIncomplete as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
@@ -2118,6 +2119,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{updated.removed_members} removed, "
             f"{updated.moved_pages} page ID URL changes -> {updated.archive}"
         )
+        if updated.history_revisions:
+            print(
+                f"Preserved complete history: {updated.history_revisions} oldids "
+                f"({updated.reused_revisions} reused from parent)"
+            )
         print(f"Snapshot provenance -> {updated.manifest}")
         print(f"Snapshot inventory -> {updated.inventory}")
         return 0

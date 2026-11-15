@@ -293,10 +293,17 @@ def test_update_from_cli_and_mode_exclusivity(tmp_path: Path, monkeypatch, capsy
     ]) == 0
     assert "assets verified or downloaded" in capsys.readouterr().out
     assert len(list((tmp_path / "cli-archives").glob("*.zip"))) == 1
-    for option in ("--include-history", "--retry-failed-only", "--from-snapshot"):
+    for option in ("--retry-failed-only", "--from-snapshot"):
         value = (["other.zip"] if option == "--from-snapshot" else [])
         assert cli.main(["--update-from", str(parent[0]), option, *value]) == 1
         assert "cannot be combined" in capsys.readouterr().err
+    assert cli.main([
+        "--update-from", str(parent[0]),
+        "--from-manifest", str(parent[1]),
+        "--from-inventory", str(parent[2]),
+        "--include-history",
+    ]) == 1
+    assert "requires a history-enabled parent" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("site,language", [
@@ -338,18 +345,19 @@ def test_update_supported_site_languages(tmp_path: Path, monkeypatch, site, lang
         assert item["interpretation"] == "unresolved-url-association"
 
 
-def test_update_does_not_silently_discard_history_parent(
+def test_history_parent_is_accepted_only_with_explicit_current_source_mapping(
     tmp_path: Path, monkeypatch,
 ):
     from test_snapshot_history_reuse import _history_parent
+    from infinity_wiki_acquisition.snapshot_update import _parent_sources
 
     parent = _history_parent(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        cli, "fetch_site_bytes", lambda *a, **k: pytest.fail("network called"),
-    )
-    with pytest.raises(ValueError, match="non-history parents only"):
-        _update(parent, tmp_path)
-    assert not (tmp_path / "work-new").exists()
+    checked = verify_snapshot(*parent)
+    sources = _parent_sources(checked)
+    assert sources
+    assert all(row["kind"] in {"current-page", "asset"} for row in sources.values())
+    assert all(not url.startswith("_history/") for url in sources)
+    assert checked["history"] is True
 
 
 def test_update_inventory_refuses_retention_completeness_claim(
