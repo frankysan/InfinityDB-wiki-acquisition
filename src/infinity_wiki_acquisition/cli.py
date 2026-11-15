@@ -1215,6 +1215,20 @@ def local_relative_path(
     path_os_name = os_name
     if path_os_name is None:
         path_os_name = "Windows"
+    # The Infinity Wiki language/root and legacy /wiki/ routing segments
+    # are not page-title spellings. Keep their existing directory identity
+    # and generated index.html unchanged; disambiguate the actual title.
+    if site.key == INFINITY_WIKI_SITE.key and not asset:
+        generated_index = path == "/" or path.endswith("/")
+        directory = ""
+        if normalized.startswith(("es/", "wiki/")):
+            directory, normalized = normalized.split("/", 1)
+            directory += "/"
+        leaf = sanitize_relative_path(
+            normalized, os_name=path_os_name,
+            disambiguate_page_case=not generated_index,
+        )
+        return directory + leaf
     return sanitize_relative_path(
         normalized,
         os_name=path_os_name,

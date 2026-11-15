@@ -45,8 +45,22 @@ from the downloader and shared archive/provenance Git history and the
   `snapshot.contentSha256` offline; the producer-relative path in the manifest is
   informational.
 
+### Fixed
+
+- **Acquisition:** Infinity Wiki now distinguishes differently capitalized
+  source page titles using stable portable filename suffixes, just as
+  Human Sphere already did. Conventional root/language-routing paths
+  are preserved. Distinct URL identities are never silently merged.
+
 ### Added
 
+- **Acquisition:** Added offline recovery for previously interrupted
+  Infinity Wiki crawls with Windows case-insensitive page-title
+  collisions (e.g. `No_LoF` versus `No_Lof`). A new read-only-source
+  migration command copies a verified checkpoint and original-HTML replay
+  inputs into a separate work directory, rebuilding case-safe saved
+  paths, rewritten links and per-page provenance before regular resume.
+  The original checkpoint and source files are untouched.
 - **Acquisition:** Completed P2.5c operator acceptance of both
   `--from-snapshot --include-history --resume-work` and
   `--update-from --resume-work`: synthetic end-to-end CLI recovery

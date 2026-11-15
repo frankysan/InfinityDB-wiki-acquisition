@@ -303,6 +303,45 @@ infinity-wiki-snapshot `
   --retry-failed-only
 ```
 
+### Repair an older Infinity Wiki case-collision checkpoint
+
+If an earlier English or Spanish Infinity Wiki run failed because two
+source titles differed only by capitalization (for example, `No_LoF` and
+`No_Lof`), **do not retry its old work directory directly after upgrading
+the downloader**. The page-path mapping has changed. Existing pages also
+contain links written using the previous mapping.
+
+For a fresh, non-history crawl started with `--source-replay-dir`, use the
+offline repair tool to **create a new work directory** from its committed
+checkpoint and retained original HTML bodies:
+
+```powershell
+python -m infinity_wiki_acquisition.repair_crawl_paths `
+  --work "local/work/wiki/WIKI-en 20261115-213855.work" `
+  --output-work "local/work/wiki/WIKI-en 20261115-213855-portable.work"
+```
+
+Then resume from the **new** work directory with the same source/language
+and original HTML replay option:
+
+```powershell
+infinity-wiki-snapshot `
+  --site infinity-wiki --language en `
+  --resume-work "local/work/wiki/WIKI-en 20261115-213855-portable.work" `
+  --source-replay-dir "local/data/wiki-source-replay"
+```
+
+The repair does **not** access the network or modify the old work directory.
+It verifies committed saved HTML against its retained source evidence,
+reconstructs every saved page's local links, and maps case-variant titles to
+distinct portable filenames. Only checkpoint-committed files are migrated;
+in-flight downloads may repeat during resume. The old directory is preserved
+for inspection until you explicitly decide it is no longer needed.
+An ordinary crawl without original-HTML replay evidence cannot use this
+repair safely; start a new crawl instead of guessing how to repair links.
+The tool deliberately refuses history and archive-derived work, which have
+additional provenance contracts.
+
 ### Interrupted history upgrade
 
 ```powershell

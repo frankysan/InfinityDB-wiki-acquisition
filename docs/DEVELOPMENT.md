@@ -57,6 +57,26 @@ Agents start with [AGENTS.md](../AGENTS.md).
   paths, HTML-with-asset extensions, language differences and case-folding
   collisions as source-format concerns. Preserve true source identities
   rather than collapsing pages by similarity.
+  Infinity Wiki now applies the existing deterministic case-variant
+  disambiguation to page-title components, preserving the ordinary
+  root and /es/ and /wiki/ routing prefixes. Thus a title such as
+  `No_LoF` receives a stable `__u_<sha256-prefix>` path distinct
+  from conventional `No_Lof` on Windows and Linux. The full URL,
+  page evidence, original HTML, and source identity remain unchanged;
+  binary assets retain their existing path policy.
+  An interrupted **fresh non-history** crawl created before this
+  mapping change must not directly resume stale rewritten paths.
+  The offline `python -m infinity_wiki_acquisition.repair_crawl_paths
+  --work OLD.work --output-work NEW.work` copies only checkpoint-
+  committed files into a separate work directory. It requires the
+  original `--source-replay-dir` HTML bodies, recomputes every
+  saved page's offline link rewriting, updates matching source
+  provenance and checkpoint paths, and validates portable output
+  paths without editing the original. It preserves the interrupted
+  pending/failure queue; up to one uncommitted checkpoint batch may
+  repeat. It deliberately rejects history/parent-derived runs and
+  refuses to guess missing original HTML. See the README's
+  case-collision recovery example.
 - Before reusing a completed archive, call `snapshot_verification.verify_snapshot`
   with the explicit ZIP, matching v3 provenance and v1 inventory paths.
   The verifier streams every ZIP member, checks checksums, path portability,

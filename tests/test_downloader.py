@@ -318,7 +318,7 @@ def test_download_wiki_collects_failures_without_hiding_partial_crawl(
     result = module.download_wiki(module.ROOT_URL, tmp_path)
 
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
-        "good",
+        module.local_relative_path("https://infinitythewiki.com/good"),
         "index.html",
     ]
     assert len(result.failures) == 1

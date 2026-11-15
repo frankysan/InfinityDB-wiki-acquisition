@@ -97,7 +97,7 @@ def test_current_crawl_records_mediawiki_page_identity(
     assert result.pages == (
         module.WikiPage(
             url=page_url,
-            path="BS_Attack",
+            path=module.local_relative_path(page_url),
             title="BS_Attack",
         ),
         module.WikiPage(

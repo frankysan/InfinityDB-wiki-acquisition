@@ -142,9 +142,9 @@ def sanitize_relative_path(
 ) -> str:
     """Normalize a relative path without collapsing distinct page identities.
 
-    For Human Sphere, non-ASCII components and noncanonical ASCII page-title
-    capitalization receive a stable digest. The conventional spellings and
-    ordinary asset paths remain unchanged for efficient interrupted resumes.
+    Callers choose whether non-ASCII components, noncanonical ASCII title
+    capitalization or both receive stable source-identity suffixes.
+    Conventional spellings and ordinary asset paths can keep readable names.
     """
     normalized = unquote(path).replace("\\", "/")
     if normalized.startswith("/"):
