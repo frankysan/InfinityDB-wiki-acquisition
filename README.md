@@ -78,6 +78,57 @@ because their complete discovered-URL set was not recorded. Run one normal
 valid binary assets and creates checkpoints as it progresses.
 A missing or changed *checkpointed* saved file, or a site/language mismatch,
 fails closed rather than silently certifying incomplete work.
+### Upgrade a completed snapshot to history (P2.1)
+
+A completed **non-history** snapshot with its matching v3 provenance JSON and
+v1 inventory can be upgraded into a *new* history-enabled snapshot without
+re-downloading any current HTML or assets:
+
+```powershell
+infinity-wiki-snapshot --from-snapshot "local/data/wiki/WIKI-en 20261114-120000.zip" --include-history
+```
+
+The command looks for the parent manifest at
+`--manifest-dir/<parent ZIP stem>.json` and its inventory at
+`--manifest-dir/inventories/<parent ZIP stem>.inventory.json`.
+Use `--from-manifest <path>` and `--from-inventory <path>` for
+other locations. The parent site and language are inferred from verified
+inventory/provenance; explicit `--site` and `--language` values must match.
+New outputs use the normal `--root`, `--manifest-dir` and
+`--work-root` destinations, with a `-history` archive identity.
+
+The parent ZIP, manifest and inventory are checked by
+`verify_snapshot` **before any network requests**. Every inherited
+current-page and asset member is copied byte-for-byte into fresh work.
+Original page IDs, source URLs, captured HTTP evidence, mirrored byte hashes,
+references and ignored-URL evidence are retained in the new inventory.
+New MediaWiki revision lists and rendered oldid files are then downloaded.
+The original files never change. The new v3 manifest records the parent ZIP
+as `inputArtifact`, and the v1 inventory records the exact parent ZIP,
+manifest and inventory hashes.
+
+**Identity boundary:** every inherited member must already be classified
+as a current page with an explicit source URL/title, or as a known asset.
+Unknown members might be missing page identities and block P2.1 instead of
+silently omitting their history. Conservative P1.4 inventories containing
+unknown members therefore need independent source-identity review first.
+
+**Time and cutoff semantics:** the original current HTML retains its
+*parent snapshot acquisition time*. The new inventory independently records
+`currentContentAcquiredAt` and `historyRetrievedAt`; the new manifest's
+`acquiredAt` is when the *new history snapshot* is built. The history scope is
+`all-observed`: fetch all revisions the source API advertises during the
+upgrade, **including revisions newer than the inherited current HTML**.
+There is no historical date cutoff or promise of an exact as-of-time corpus
+in P2.1. Date-bounded historical reconstructions need separately designed
+source/coverage semantics; the command does not mislabel a partial history as
+complete.
+
+On a required revision failure, no ZIP/manifest/inventory is published.
+The staging directory and history checkpoint are preserved for inspection,
+but `--resume-work` and `--retry-failed-only` cannot be combined with
+`--from-snapshot` yet; archive-derived resume is scheduled for P2.5.
+
 ### Resume historical revisions
 
 With `--include-history`, acquisition also writes a separate
@@ -195,8 +246,73 @@ checks without claiming dependency completeness.
 
 The inventory is producer-side metadata for future incremental acquisition,
 not a replacement for the v3 provenance manifest. ZIP and provenance remain
-the same consumer contract; P1.3–P1.4 in `docs/TODO.md` cover stronger
-cross-artifact verification and legacy indexing.
+the same consumer contract; P1.4 in `docs/TODO.md` covers legacy indexing.
+
+### Verify a completed snapshot before reuse
+
+The P1.3 offline verification boundary requires all three published artifacts:
+the ZIP, its matching v3 provenance JSON and its v1 inventory sidecar.
+From an installed Python environment:
+
+```python
+from pathlib import Path
+from infinity_wiki_acquisition.snapshot_verification import verify_snapshot
+
+verified_inventory = verify_snapshot(
+    Path("local/data/wiki/WIKI-en 20261115-120000.zip"),
+    Path("local/data/manifests/snapshots/WIKI-en 20261115-120000.json"),
+    Path("local/data/manifests/snapshots/inventories/WIKI-en 20261115-120000.inventory.json"),
+)
+```
+
+The call returns the checked inventory or raises `SnapshotVerificationError`.
+It verifies the exact ZIP and logical-content hashes, streams every file to
+validate ZIP integrity/size/SHA-256, rejects unsafe or colliding member paths,
+and checks inventory, provenance, site, language, history and recorded revision
+relationships for contradictions. Verification never extracts or edits input
+files and needs no work directory or network access. Unknown source evidence
+that was never captured is allowed; contradictory recorded evidence is not.
+Older snapshots without inventories need conservative indexing before this
+API can certify reuse. Neither checksums nor sidecars authenticate who supplied
+an otherwise self-consistent set of files; establish artifact trust separately.
+
+### Index a completed legacy snapshot (P1.4)
+
+For a previously completed Wiki/Human Sphere snapshot that predates inventories,
+use the explicit **offline** command with the original ZIP and matching **v3**
+provenance JSON:
+
+```powershell
+infinity-wiki-index-legacy "local/data/wiki/WIKI-en 20261015-110000.zip" "local/data/manifests/snapshots/WIKI-en 20261015-110000.json"
+```
+
+The command creates `<archive stem>.inventory.json` in the manifest
+directory's `inventories/` subdirectory; `--inventory-dir <directory>`
+selects another sidecar directory. The same entry point is available as
+`python -m infinity_wiki_acquisition.legacy_snapshot_index`. Indexing
+validates the exact ZIP hash, logical-content hash and member integrity,
+then checks the generated inventory with `verify_snapshot` **before**
+publishing it. Nothing is extracted or downloaded. ZIPs and manifests are
+never rewritten, and existing inventories or staging files are never replaced.
+
+Without a trustworthy original source mapping, a member name such as
+`Main_Page.html`, `File:Something.jpg.html` or `images/photo.png`
+**cannot** establish a page URL or asset origin. Those members remain
+`unknown`, even if their contents resemble HTML or images. For history
+archives, the explicitly recorded `_history/index.json` supplies current-page
+URLs, titles, and oldid revision references. Page IDs, original HTTP body
+hashes, redirects, referenced resources and unobserved response headers
+remain unknown. The sidecar records `captureMetadata.legacyIndexed: true`
+and `ignoredUrlsAvailable: false`; an empty `ignoredUrls` list in a
+reconstructed inventory does not prove no URLs were ignored.
+
+Indexing requires v3 Wiki provenance, recognized site/language and an
+internally consistent, portable archive with a matching history mode.
+Earlier manifest versions, contradictory history indexes, missing members,
+unsafe paths and damaged ZIPs are rejected rather than silently upgraded.
+This creates verifiable *file evidence*, not proof that an old crawl covered
+every source URL or that its contents remain current.
+
 
 ## Consumer contract
 

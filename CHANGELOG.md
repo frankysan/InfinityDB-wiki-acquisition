@@ -47,6 +47,30 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Completed P2.1 archive-derived history upgrade via
+  `infinity-wiki-snapshot --from-snapshot <zip> --include-history`. Verified
+  existing non-history ZIP/provenance/inventory triples can now be reused
+  byte-for-byte without downloading current pages or assets again. The new
+  history archive preserves inherited source evidence, independently acquires
+  revision lists and oldid HTML, and records parent artifact hashes and separate
+  current-content/history retrieval times in its v1 inventory. Existing v3
+  provenance remains compatible and records the parent ZIP as `inputArtifact`.
+  Unknown source identities and incomplete historical acquisition block
+  publication; P2.1 history scope is explicitly `all-observed`, not a
+  date-bounded reconstruction.
+- **Acquisition:** Added an explicit offline legacy snapshot indexer
+  (`infinity-wiki-index-legacy`) for completed pre-inventory Wiki ZIPs with
+  matching v3 provenance. It reconstructs v1 inventory hashes and only
+  independently archived history-index page/revision identities, preserving
+  unknown source metadata instead of guessing from filenames or HTML.
+  Newly constructed sidecars pass full cross-artifact verification before
+  exclusive publication; existing ZIPs, manifests and inventories are unchanged.
+- **Acquisition:** A read-only `verify_snapshot(archive, manifest, inventory)`
+  interface now verifies completed Wiki snapshots before reuse, rejecting ZIP
+  hash/CRC/member tampering, unsafe or colliding archive paths, contradictory
+  site/history/provenance metadata, and inconsistent revision-index identities.
+  No existing ZIP or v3 provenance fields changed; older snapshots still need
+  a verified inventory before reuse.
 - **Acquisition:** Snapshot inventories now carry independently observed
   source-page identities and offline-mirrored file identities. The crawler
   persists private per-page original-HTML evidence, retains MediaWiki

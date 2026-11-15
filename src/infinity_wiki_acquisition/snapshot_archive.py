@@ -42,6 +42,38 @@ def _portable_key(path: str) -> str:
     return unicodedata.normalize("NFC", path).casefold()
 
 
+def validate_archive_member_paths(names: Iterable[str]) -> None:
+    """Validate file-only ZIP paths, including collisions on case-insensitive hosts."""
+    seen_names: set[str] = set()
+    seen_casefolded: dict[str, str] = {}
+    directories: set[str] = set()
+    directory_names: dict[str, str] = {}
+    for name in names:
+        _portable_archive_path(name)
+        if name in seen_names:
+            raise ValueError(f"Duplicate archive path: {name}")
+        key = _portable_key(name)
+        if previous := seen_casefolded.get(key):
+            raise ValueError(f"Case-only archive path collision: {previous!r} and {name!r}")
+        if key in directories:
+            raise ValueError(f"Archive file/directory collision: {name!r}")
+        parts = name.split("/")
+        parents = ["/".join(parts[:i]) for i in range(1, len(parts))]
+        for parent in parents:
+            parent_key = _portable_key(parent)
+            if parent_key in seen_casefolded:
+                raise ValueError(f"Archive file/directory collision: {name!r}")
+            existing = directory_names.get(parent_key)
+            if existing is not None and existing != parent:
+                raise ValueError(
+                    f"Case-only archive directory collision: {existing!r} and {parent!r}"
+                )
+            directory_names[parent_key] = parent
+            directories.add(parent_key)
+        seen_names.add(name)
+        seen_casefolded[key] = name
+
+
 def create_timestamped_archive(
     files: Iterable[Path],
     destination: Path,
@@ -60,50 +92,31 @@ def create_timestamped_archive(
         sequence += 1
 
     items: list[tuple[str, Path]] = []
-    seen_names: set[str] = set()
-    seen_casefolded: dict[str, str] = {}
-    directories: set[str] = set()
-    directory_names: dict[str, str] = {}
     for path in files:
         arcname = path.relative_to(root).as_posix() if root is not None else path.name
-        _portable_archive_path(arcname)
-        if arcname in seen_names:
-            raise ValueError(f"Duplicate archive path: {arcname}")
-        casefolded = _portable_key(arcname)
-        if previous := seen_casefolded.get(casefolded):
-            raise ValueError(
-                f"Case-only archive path collision: {previous!r} and {arcname!r}"
-            )
-        if casefolded in directories:
-            raise ValueError(f"Archive file/directory collision: {arcname!r}")
-        parts = arcname.split("/")
-        parent_paths = ["/".join(parts[:i]) for i in range(1, len(parts))]
-        parents = [_portable_key(parent) for parent in parent_paths]
-        if any(parent in seen_casefolded for parent in parents):
-            raise ValueError(f"Archive file/directory collision: {arcname!r}")
-        for parent_path, parent_key in zip(parent_paths, parents, strict=True):
-            existing = directory_names.get(parent_key)
-            if existing is not None and existing != parent_path:
-                raise ValueError(
-                    f"Case-only archive directory collision: {existing!r} and {parent_path!r}"
-                )
-            directory_names[parent_key] = parent_path
-        seen_names.add(arcname)
-        seen_casefolded[casefolded] = arcname
-        directories.update(parents)
         items.append((arcname, path))
+    validate_archive_member_paths(name for name, _ in items)
 
-    with zipfile.ZipFile(
-        archive,
-        "x",
-        compression=_ARCHIVE_COMPRESSION,
-        compresslevel=_ARCHIVE_COMPRESSLEVEL,
-    ) as output:
-        for arcname, path in sorted(items):
-            output.writestr(
-                _archive_info(arcname),
-                path.read_bytes(),
-                compress_type=_ARCHIVE_COMPRESSION,
-                compresslevel=_ARCHIVE_COMPRESSLEVEL,
-            )
+    created = False
+    try:
+        with zipfile.ZipFile(
+            archive,
+            "x",
+            compression=_ARCHIVE_COMPRESSION,
+            compresslevel=_ARCHIVE_COMPRESSLEVEL,
+        ) as output:
+            created = True
+            for arcname, path in sorted(items):
+                output.writestr(
+                    _archive_info(arcname),
+                    path.read_bytes(),
+                    compress_type=_ARCHIVE_COMPRESSION,
+                    compresslevel=_ARCHIVE_COMPRESSLEVEL,
+                )
+    except BaseException:
+        # A failed write must not leave a seemingly completed ZIP behind.
+        # Never remove a competing pre-existing destination.
+        if created:
+            archive.unlink(missing_ok=True)
+        raise
     return archive

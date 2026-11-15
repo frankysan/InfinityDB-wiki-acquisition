@@ -57,6 +57,42 @@ Agents start with [AGENTS.md](../AGENTS.md).
   paths, HTML-with-asset extensions, language differences and case-folding
   collisions as source-format concerns. Preserve true source identities
   rather than collapsing pages by similarity.
+- Before reusing a completed archive, call `snapshot_verification.verify_snapshot`
+  with the explicit ZIP, matching v3 provenance and v1 inventory paths.
+  The verifier streams every ZIP member, checks checksums, path portability,
+  duplicate/case/directory collisions, manifest/site/history metadata and
+  history revision identities. Missing inventory or inconsistent evidence
+  blocks reuse, while genuinely unavailable optional source metadata does not.
+  Do not infer reuse safety from a successful standalone manifest/inventory
+  loader call. It is an offline, read-only check, not a signature or source
+  authenticity guarantee; determine artifact trust separately.
+- For pre-inventory completed snapshots, use the explicit
+  `legacy_snapshot_index.write_legacy_snapshot_inventory` API or
+  `infinity-wiki-index-legacy` command. Require exact v3 provenance,
+  match site/language/archive/history identity, and validate the constructed
+  v1 inventory against the original ZIP/provenance **before** publishing with
+  no-replace semantics. Do not rewrite the ZIP or provenance. Only a valid
+  archived history index supplies recoverable current-page and oldid
+  identities; unobserved source URLs, assets, original HTTP responses,
+  ignored URL lists and page IDs remain unknown. Earlier manifest formats
+  need a separately reviewed migration/verification contract, not inference
+  from file extensions or archive naming alone.
+- For the P2.1 non-history-to-history upgrade, accept only an independently
+  verified ZIP/v3 manifest/v1 inventory triple with all original members
+  explicitly classified as current pages or assets. Work in a newly created
+  staging directory, copying the exact verified members (and their source
+  metadata) from the source ZIP; never revisit current page/asset URLs.
+  Reuse the existing checkpointed history downloader for oldid enumeration
+  and fetching. Publish a new *complete* history ZIP, matching v3 manifest,
+  and validated v1 inventory; retain original artifact hashes as lineage in
+  the inventory and the parent ZIP as the manifest `inputArtifact`.
+  Record distinct parent current-content acquisition, history completion,
+  and new archive creation times. `historyCutoff=all-observed` means **all
+  revisions advertised during the history enumeration**; no timestamp-limited
+  historical subset is supported in P2.1. Unknown member identities and
+  partial history fail closed. Archive-derived resume and historical
+  as-of-time reconstruction remain outside P2.1 scope; retained failed
+  staging is inspection evidence, not an automatic resume authorization.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application
@@ -66,6 +102,51 @@ maintain backward compatibility where supported and test a pinned
 consumer reader without adding an `infinity_db` runtime dependency.
 No claim of source-content completeness or gameplay accuracy follows
 merely from a successful crawl.
+
+## Checkpoint storage decision (P1.5, 2026-11-15)
+
+**Keep the existing JSON checkpoints for P0/P1.** A bounded synthetic
+microbenchmark on the Windows development checkout compared the current
+atomic JSON writers with a minimal SQLite table, updating 100 rows per
+transaction (`journal_mode=DELETE`, `synchronous=FULL`).
+The median of three checkpoint writes was:
+
+| Synthetic workload | Full JSON rewrite | SQLite 100-row update |
+| --- | ---: | ---: |
+| 10,000 discovered URLs (8,000 initially saved) | 11.0 ms | 2.5 ms |
+| 75,000 discovered URLs (60,000 initially saved) | 74.1 ms | 2.8 ms |
+
+JSON checkpoint construction added approximately 0.6/6.4 ms respectively.
+For complete synthetic history state, full JSON rewrites took 16.2 ms with
+10,000 revisions and 78.0 ms with 50,000 revisions. The 75,000-URL
+benchmark's JSON file was ~14.6 MB and the SQLite file ~13.0 MB;
+the latter has a deliberately **incomplete** schema and the sizes are not
+directly comparable. JSON was measured via the existing writers including
+serialization, atomic replacement and disk I/O; SQLite used a preloaded,
+indexed table with one transaction and excluded the initial migration
+(~172 ms at 75,000 rows), data mapping, source-file validation and
+checkpoint contract checks. No live crawl was timed. These measurements
+are directional and are **not** proof of an equivalent end-to-end SQLite
+implementation or cross-platform performance.
+
+The JSON checkpoint frequency (each enumeration batch and approximately
+100 completed URL attempts; history at API batches, 100 oldids or each page)
+makes the measured write cost small compared with expected network work.
+There is no measured crawl-level bottleneck requiring a storage migration.
+Changing only the on-disk encoding would not help: the caller still assembles
+a complete state snapshot, and all saved paths still require validation when
+resuming. Atomic JSON replacement and v1/v2 crawl compatibility are already
+covered by tests.
+
+**Revisit under P2**, rather than introduce two competing state authorities:
+profile a genuine large archive-derived run if persistence consumes a material
+fraction of its duration (for example over 5%), commits become much more
+frequent, or lineage/change-set updates require expensive whole-state rewrites.
+If SQLite is justified, use it only for private producer work state, commit
+coherent URL/history batches transactionally, retain fail-closed resume/file
+validation, and provide a tested one-time checkpoint migration. Do not import
+the application runtime, store SQLite in published ZIPs, or change the
+v3 provenance/v1 inventory consumer contract merely to change work state.
 
 ## Development checks
 

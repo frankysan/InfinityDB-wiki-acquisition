@@ -1906,7 +1906,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--site",
         choices=tuple(WIKI_SITES),
-        default=DEFAULT_SITE.key,
+        default=None,
         help=(
             "MediaWiki site to mirror (default: infinity-wiki; "
             "human-sphere is currently English-only)"
@@ -1930,8 +1930,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--language",
         choices=SUPPORTED_LANGUAGES,
-        default="en",
-        help="Wiki language to mirror where supported (default: en)",
+        default=None,
+        help="Wiki language to mirror where supported (default: en; inferred for --from-snapshot)",
     )
     parser.add_argument(
         "--include-history",
@@ -1939,6 +1939,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Also archive every rendered MediaWiki oldid revision for each mirrored "
             "page; this can be substantially larger and slower than a normal snapshot"
+        ),
+    )
+    parser.add_argument(
+        "--from-snapshot",
+        type=Path,
+        help=(
+            "Upgrade a verified completed non-history ZIP to a new history "
+            "snapshot; requires --include-history and its matching v3 manifest "
+            "and v1 inventory; never downloads current pages again"
+        ),
+    )
+    parser.add_argument(
+        "--from-manifest",
+        type=Path,
+        help="Parent provenance JSON (defaults to --manifest-dir/<parent ZIP stem>.json)",
+    )
+    parser.add_argument(
+        "--from-inventory",
+        type=Path,
+        help=(
+            "Parent inventory JSON (defaults to --manifest-dir/inventories/"
+            "<parent ZIP stem>.inventory.json)"
         ),
     )
     parser.add_argument(
@@ -1968,7 +1990,57 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    site = WIKI_SITES[args.site]
+    if args.from_snapshot is not None:
+        if not args.include_history or args.retry_failed_only or args.resume_work is not None:
+            print(
+                "ERROR: --from-snapshot requires --include-history and cannot "
+                "be combined with --retry-failed-only/--resume-work",
+                file=sys.stderr,
+            )
+            return 1
+        from infinity_wiki_acquisition.snapshot_upgrade import (
+            SnapshotUpgradeIncomplete, upgrade_snapshot_with_history,
+        )
+
+        parent_zip = args.from_snapshot
+        parent_manifest = (
+            args.from_manifest or args.manifest_dir / f"{parent_zip.stem}.json"
+        )
+        parent_inventory = (
+            args.from_inventory
+            or args.manifest_dir / "inventories" / f"{parent_zip.stem}.inventory.json"
+        )
+        try:
+            upgraded = upgrade_snapshot_with_history(
+                parent_zip, parent_manifest, parent_inventory,
+                archive_directory=args.root,
+                manifest_directory=args.manifest_dir,
+                work_root=args.work_root,
+                expected_site=args.site, expected_language=args.language,
+            )
+        except SnapshotUpgradeIncomplete as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            for failure in exc.failures:
+                print(f"  {failure.url}: {failure.error}", file=sys.stderr)
+            return 1
+        except KeyboardInterrupt:
+            print("History upgrade interrupted; preserved work for inspection.", file=sys.stderr)
+            return 130
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"Reused {upgraded.reused_members} parent members and acquired "
+            f"{upgraded.revision_count} history revisions -> {upgraded.archive}"
+        )
+        print(f"Snapshot provenance -> {upgraded.manifest}")
+        print(f"Snapshot inventory -> {upgraded.inventory}")
+        return 0
+    if args.from_manifest is not None or args.from_inventory is not None:
+        print("ERROR: --from-manifest/--from-inventory requires --from-snapshot", file=sys.stderr)
+        return 1
+    site = WIKI_SITES[args.site or DEFAULT_SITE.key]
+    args.language = args.language or "en"
     try:
         _require_site_language(site, args.language)
     except ValueError as exc:
