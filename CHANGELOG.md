@@ -47,6 +47,14 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added P2.3b.3 batched current-page revision observations
+  after the HTML crawl. New snapshots record latest source revision IDs,
+  timestamps, MediaWiki page ID/title, API query windows and original HTML
+  fetch times when available. Unknown/mismatched API identities remain
+  explicit; parent-to-child updates record changed/unchanged/missing revision
+  baselines without ever skipping rendered HTML or claiming transclusion
+  freshness. Optional v1 inventory fields and their coverage/comparison
+  assertions are independently checked, preserving older archives.
 - **Acquisition:** Extended P2.3b with MediaWiki original-upload version
   verification using the Action API's latest `prop=imageinfo` SHA-1,
   size, timestamp and exact URL. An unchanged original upload can now reuse

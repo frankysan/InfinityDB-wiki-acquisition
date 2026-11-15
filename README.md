@@ -220,16 +220,27 @@ RecentChanges continuation is checked, but
 `retentionCoverage: unverified` is mandatory: even a paginated complete
 response cannot prove how far the Wiki retains older changes.
 
-**Remaining P2.3 optimization:** capture and reconcile authoritative
-current-page revision IDs, then determine when (if ever) rendered HTML
-can be skipped without ignoring template/module or category dependencies
-(P2.4). The original-upload imageinfo path still makes an API request,
-but can avoid transferring the large upload body. HTTP validation likewise
-avoids only the response body, not the HTTP request. A multi-request crawl
-cannot claim one atomic source timestamp; media may change during lookup
-and download, in which case conflicting upload evidence blocks publication.
-Refreshing history-enabled parents and resuming interrupted derived runs
-remain pending.
+**Current-page source revisions are now recorded, not used to skip
+HTML.** After fetching current pages, the producer sends bounded
+MediaWiki revision queries (up to 40 numeric page IDs per request).
+Where the returned page identity matches, the v1 inventory optionally
+records the latest source revision ID/timestamp, page ID/title, API
+observation window and the earlier HTML fetch time. Missing page IDs,
+unavailable revisions, API failures and title disagreements remain
+explicitly unknown. The private `.wiki-current-revisions.json` work
+file is never published inside the ZIP.
+
+On an update, `currentRevisionComparisons` records changed, unchanged
+or uncomparable source revision IDs by stable page ID, while
+`htmlRefetched: true` and `renderCorrespondence: not-verified` make
+the limit explicit. An unchanged revision does **not** establish that
+rendered HTML stayed unchanged: templates, modules, categories and other
+dependencies may have changed (P2.4). These batched observations occur
+*after* HTML downloads, not atomically with them. The original-upload
+imageinfo and HTTP-validator paths can avoid large asset response bodies,
+but still make API/conditional requests. Concurrency/source-time
+reconciliation, refreshing history-enabled parents and resuming
+interrupted derived runs remain outstanding.
 
 ### Resume historical revisions
 

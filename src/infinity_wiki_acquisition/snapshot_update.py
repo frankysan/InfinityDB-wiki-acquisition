@@ -430,6 +430,14 @@ def update_snapshot(
             raise ValueError(
                 "MediaWiki allpages did not provide page IDs for an identity-based update"
             )
+        from infinity_wiki_acquisition.current_revisions import (
+            observe_current_revisions,
+        )
+
+        observe_current_revisions(
+            fresh.pages, state["pageIds"], work,
+            site=site, language=language,
+        )
         # Every member is now backed by freshly fetched bytes OR an explicit
         # remote version validation against verified parent ZIP content.
         # Recopy only matching members to maintain exact parent bytes.
@@ -496,6 +504,51 @@ def update_snapshot(
         added = new_paths - old_paths
         removed = old_paths - new_paths
         moved, absent = _page_changes(parent, updated, changes["events"])
+        parent_by_id = {
+            member["sourceIdentity"]["pageId"]: member
+            for member in parent["members"]
+            if member["kind"] == "current-page"
+            and member["sourceIdentity"]["pageId"] is not None
+        }
+        revision_transitions = []
+        for member in updated["members"]:
+            if member["kind"] != "current-page":
+                continue
+            page_id = member["sourceIdentity"]["pageId"]
+            before = parent_by_id.get(page_id)
+            old_revision = before.get("currentRevision") if before else None
+            new_revision = member.get("currentRevision")
+            old_id = (
+                old_revision["revisionId"]
+                if isinstance(old_revision, dict)
+                and old_revision.get("status") == "observed" else None
+            )
+            new_id = (
+                new_revision["revisionId"]
+                if isinstance(new_revision, dict)
+                and new_revision.get("status") == "observed" else None
+            )
+            if page_id is None:
+                state_label = "missing-page-id"
+            elif before is None:
+                state_label = "new-page-id"
+            elif new_id is None:
+                state_label = "current-revision-unknown"
+            elif old_id is None:
+                state_label = "parent-revision-unknown"
+            elif old_id == new_id:
+                state_label = "same-source-revision"
+            else:
+                state_label = "changed-source-revision"
+            revision_transitions.append({
+                "pageUrl": member["page"]["url"],
+                "pageId": page_id,
+                "previousRevisionId": old_id,
+                "currentRevisionId": new_id,
+                "comparison": state_label,
+                "htmlRefetched": True,
+            })
+        revision_transitions.sort(key=lambda item: item["pageUrl"])
         validated_assets = {
             member["sourceVersion"]["sourceUrl"]
             for member in updated["members"]
@@ -521,6 +574,7 @@ def update_snapshot(
             "removedMemberCount": len(removed),
             "pageMovesById": moved,
             "parentPageIdsAbsentFromEnumeration": absent,
+            "currentRevisionComparisons": revision_transitions,
             "recentChanges": changes,
         }
         updated["parent"] = {

@@ -17,6 +17,7 @@ from typing import Any, Iterable
 
 from infinity_wiki_acquisition.asset_evidence import read_asset_evidence
 from infinity_wiki_acquisition.crawl_checkpoint import read_crawl_checkpoint
+from infinity_wiki_acquisition.current_revisions import load_current_revision_evidence
 from infinity_wiki_acquisition.page_evidence import read_page_evidence
 from infinity_wiki_acquisition.snapshot_provenance import load_snapshot_manifest
 
@@ -126,6 +127,9 @@ def build_snapshot_inventory(
         if state["failed"]:
             raise ValueError("Cannot inventory a crawl checkpoint with unresolved failures")
 
+    current_revisions = load_current_revision_evidence(
+        work, site=site, language=language,
+    )
     source_urls: dict[str, list[str]] = {}
     page_ids: dict[str, int] = dict(state.get("pageIds", {})) if state else {}
     is_asset: dict[str, bool] = {}
@@ -238,6 +242,15 @@ def build_snapshot_inventory(
                         "module": "unknown",
                     },
                 }
+                if current_revisions is not None:
+                    revision = current_revisions.get(url)
+                    if (revision is None
+                            or revision["memberPath"] != path
+                            or revision["pageId"] != page_id):
+                        raise ValueError(
+                            f"Current revision observation does not match page: {path}"
+                        )
+                    entry["currentRevision"] = revision
             elif path in revision_sources:
                 kind = "revision"
                 revision = revision_sources[path]
@@ -311,6 +324,16 @@ def build_snapshot_inventory(
                 for member in members
             ),
             "mediaWikiPageIdsAvailable": bool(page_ids),
+            **({
+                "currentRevisionEvidence": {
+                    "pageCount": len(current_revisions),
+                    "observedCount": sum(
+                        item["status"] == "observed"
+                        for item in current_revisions.values()
+                    ),
+                    "renderCorrespondence": "not-verified",
+                }
+            } if current_revisions is not None else {}),
         },
         "parent": None,
         "members": members,

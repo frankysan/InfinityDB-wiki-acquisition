@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape as escape_html, unescape as unescape_html
 from html.parser import HTMLParser
 from pathlib import Path, PurePath
@@ -522,6 +522,7 @@ def build_page_evidence(
         "url": url,
         "path": path,
         "originalSha256": hashlib.sha256(payload).hexdigest(),
+        "fetchedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "htmlPageIdHint": markup_id,
         "httpEffectiveUrl": getattr(payload, "effective_url", None),
         "httpStatus": getattr(payload, "http_status", None),
@@ -2245,6 +2246,22 @@ def main(argv: list[str] | None = None) -> int:
             print("No wiki pages were downloaded.", file=sys.stderr)
             print(f"Preserved wiki work -> {staging_path}", file=sys.stderr)
             return 1
+
+        from infinity_wiki_acquisition.current_revisions import (
+            observe_current_revisions,
+        )
+
+        crawl_checkpoint_path = staging_path / CHECKPOINT_FILENAME
+        if crawl_checkpoint_path.is_file():
+            crawl_state = read_crawl_checkpoint(
+                crawl_checkpoint_path, work=staging_path,
+                site=site.key, language=args.language,
+                root_url=canonical_crawl_url(root_url, site=site),
+            )
+            observe_current_revisions(
+                result.pages, crawl_state["pageIds"], staging_path,
+                site=site, language=args.language,
+            )
 
         if args.include_history:
             history_progress = ConsoleHistoryProgressReporter()

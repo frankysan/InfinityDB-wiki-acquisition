@@ -180,6 +180,28 @@ Agents start with [AGENTS.md](../AGENTS.md).
   stronger than inferring unchanged images from path or date alone.
   Source revision IDs for current HTML and dependency-aware reuse remain
   open P2.3b/P2.4 work.
+- P2.3b.3 captures **post-crawl current-page revision observations** with
+  bounded MediaWiki `prop=revisions` requests (`pageids` batches of 40,
+  `rvprop=ids|timestamp`, `rvlimit=1`, newest first). Only current pages
+  linked to numeric allpages page IDs qualify. For each observation, preserve
+  page URL and local member path, independent MediaWiki page ID, the returned
+  title, latest revision ID and timestamp, API request/check times and the
+  earlier HTML fetch time (when recorded). Missing IDs, API errors, title
+  disagreements and missing revision data are represented as explicit
+  unknown statuses, **never** guessed or used to skip rendered HTML.
+  Store private `.wiki-current-revisions.json` under the work directory,
+  then expose optional per-member `currentRevision` and
+  `captureMetadata.currentRevisionEvidence` (same v1 inventory format).
+  The verifier checks observation times, ID/title/path matches, explicit
+  unknowns and counts. `renderCorrespondence: not-verified` is mandatory:
+  these API lookups happen *after* HTML rendering and do not prove which
+  source version or transclusions generated the earlier response.
+  On `--update-from`, compare parent/child latest source revision IDs by
+  stable page ID and report same/changed/unknown/no-baseline states with
+  `htmlRefetched: true`. Keep prior move/missing-page IDs separate from
+  this comparison; an absent ID is not proof of deletion. The next
+  follow-up is concurrency and source-time coverage reconciliation, while
+  P2.4 owns transclusion/dependency invalidation.
 
 The consumer receives a portable **complete ZIP plus its matching JSON**,
 not the producer checkout, a crawl work directory or an application

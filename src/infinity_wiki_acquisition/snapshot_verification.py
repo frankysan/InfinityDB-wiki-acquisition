@@ -84,6 +84,8 @@ def _member_metadata(
     paths: set[str],
     history: bool,
     history_sources: dict[str, dict[str, Any]],
+    site: Any,
+    language: str,
 ) -> None:
     kind = member.get("kind")
     _require(kind in _KINDS, f"Unknown inventory member kind at {path}")
@@ -150,6 +152,27 @@ def _member_metadata(
         target = identity.get("httpRedirectTarget")
         _require(identity.get("httpRedirectVerified") is bool(target),
                  f"Contradictory HTTP redirect evidence at {path}")
+        current = member.get("currentRevision")
+        if current is not None:
+            from infinity_wiki_acquisition.current_revisions import (
+                _same_title, validate_current_revision_record,
+            )
+            from infinity_wiki_acquisition.cli import page_title_from_url
+            try:
+                validate_current_revision_record(current, url=url)
+            except ValueError as exc:
+                raise SnapshotVerificationError(
+                    f"Invalid current revision observation at {path}: {exc}"
+                ) from exc
+            _require(current["memberPath"] == path
+                     and current["pageId"] == page_id,
+                     f"Current revision observation contradicts page ID/path: {path}")
+            if current["status"] == "observed":
+                expected_title = page_title_from_url(
+                    url, site=site, language=language,
+                )
+                _require(_same_title(current["apiTitle"], expected_title),
+                         f"Current revision API title contradicts page URL: {path}")
         _require(member.get("transclusionCoverage") == {
             "template": "unknown", "module": "unknown",
         }, f"Unsupported transclusion claim at {path}")
@@ -368,6 +391,70 @@ def verify_snapshot(
                 for key in ("pageMovesById", "parentPageIdsAbsentFromEnumeration"):
                     _require(isinstance(metadata.get(key), list),
                              f"Invalid archive update evidence: {key}")
+                if mode == "verified-asset-version-refresh" and (
+                    "currentRevisionComparisons" in metadata
+                ):
+                    comparisons = metadata["currentRevisionComparisons"]
+                    _require(
+                        isinstance(comparisons, list)
+                        and len(comparisons) == sum(
+                            item.get("kind") == "current-page"
+                            for item in document["members"]
+                        ),
+                        "Current revision comparison coverage is incomplete",
+                    )
+                    seen_urls: set[str] = set()
+                    current_pages = {
+                        item["page"]["url"]: item
+                        for item in document["members"]
+                        if item.get("kind") == "current-page"
+                    }
+                    for row in comparisons:
+                        _require(isinstance(row, dict)
+                                 and set(row) == {
+                                     "pageUrl", "pageId", "previousRevisionId",
+                                     "currentRevisionId", "comparison",
+                                     "htmlRefetched",
+                                 }, "Invalid current revision comparison")
+                        row_url = row["pageUrl"]
+                        member = current_pages.get(row_url)
+                        _require(
+                            member is not None and row_url not in seen_urls
+                            and row["htmlRefetched"] is True
+                            and row["pageId"] == member["sourceIdentity"]["pageId"]
+                            and row["comparison"] in {
+                                "missing-page-id", "new-page-id",
+                                "current-revision-unknown", "parent-revision-unknown",
+                                "same-source-revision", "changed-source-revision",
+                            }
+                            and (row["previousRevisionId"] is None or (
+                                type(row["previousRevisionId"]) is int
+                                and row["previousRevisionId"] > 0
+                            )),
+                            "Current revision comparison identity is inconsistent",
+                        )
+                        current = member.get("currentRevision")
+                        expected_id = (
+                            current["revisionId"]
+                            if current is not None
+                            and current["status"] == "observed" else None
+                        )
+                        _require(
+                            row["currentRevisionId"] == expected_id
+                            and (
+                                row["comparison"] != "same-source-revision"
+                                or (expected_id is not None
+                                    and expected_id == row["previousRevisionId"])
+                            )
+                            and (
+                                row["comparison"] != "changed-source-revision"
+                                or (expected_id is not None
+                                    and row["previousRevisionId"] is not None
+                                    and expected_id != row["previousRevisionId"])
+                            ),
+                            "Current revision comparison contradicts member evidence",
+                        )
+                        seen_urls.add(row_url)
                 changes = _object(metadata.get("recentChanges"), "recentChanges")
                 _require(set(changes) == {
                     "requestedFrom", "requestedThrough", "retentionCoverage",
@@ -568,6 +655,7 @@ def verify_snapshot(
                 _member_metadata(
                     item, path=info.filename, paths=paths, history=history,
                     history_sources=revision_sources,
+                    site=site, language=language,
                 )
 
             conditional_count = sum(
@@ -577,6 +665,40 @@ def verify_snapshot(
                     "conditionalRevalidated", False,
                 )
             )
+            revision_observations = [
+                item["currentRevision"] for item in entries.values()
+                if item["kind"] == "current-page"
+                and "currentRevision" in item
+            ]
+            revision_coverage = document["captureMetadata"].get(
+                "currentRevisionEvidence",
+            )
+            if revision_coverage is not None:
+                revision_coverage = _object(
+                    revision_coverage, "currentRevisionEvidence",
+                )
+                _require(
+                    set(revision_coverage) == {
+                        "pageCount", "observedCount", "renderCorrespondence",
+                    }
+                    and revision_coverage["renderCorrespondence"] == "not-verified"
+                    and type(revision_coverage["pageCount"]) is int
+                    and revision_coverage["pageCount"] == len(revision_observations)
+                    and revision_coverage["pageCount"]
+                    == sum(item["kind"] == "current-page"
+                           for item in entries.values())
+                    and type(revision_coverage["observedCount"]) is int
+                    and revision_coverage["observedCount"] == sum(
+                        item["status"] == "observed"
+                        for item in revision_observations
+                    ),
+                    "Current revision observation coverage contradicts members",
+                )
+            else:
+                _require(
+                    not revision_observations,
+                    "Unreported current revision observations",
+                )
             upload_evidence = [
                 item["uploadVersion"] for item in entries.values()
                 if item.get("kind") == "asset"
