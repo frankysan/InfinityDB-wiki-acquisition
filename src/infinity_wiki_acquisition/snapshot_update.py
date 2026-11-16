@@ -60,16 +60,53 @@ class SnapshotUpdateResult(NamedTuple):
     source_replay: Path | None = None
 
 
+def _is_legacy_opensearch_resource(
+    member: dict[str, Any], *, site: Any,
+) -> bool:
+    """Recognize one previously unclassified Rules Wiki XML service member.
+
+    Older crawls followed the HTML rel=search link as if it were a page.
+    Its XML response was saved but the inventory accurately marked it
+    'unknown'. A fully verified parent gives us the exact observed source
+    URL, so we may discard this legacy member during a fresh update.
+    This does NOT reclassify old bytes, authorize reuse, or accept arbitrary
+    unclassified members.
+    """
+    from infinity_wiki_acquisition import cli
+
+    if (site.key != cli.INFINITY_WIKI_SITE.key
+            or member["kind"] != "unknown"
+            or len(member["sourceUrls"]) != 1):
+        return False
+    url = member["sourceUrls"][0]
+    if not cli.is_opensearch_description_url(url, site=site):
+        return False
+    old_layout = site._replace(page_path_suffix="")
+    expected_paths = {
+        cli.local_relative_path(url, site=old_layout),
+        cli.local_relative_path(url, site=site),
+        cli.local_relative_path(url, asset=True, site=site),
+    }
+    return member["path"] in expected_paths
+
+
 def _parent_sources(parent: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Require a classified source set; avoid interpreting unknown members."""
+    """Require classified sources, except for one verified, discardable service."""
+    from infinity_wiki_acquisition import cli
+
     if parent["captureMetadata"].get("legacyIndexed") is True:
         raise ValueError(
             "--update-from needs original source URL evidence; "
             "a legacy-reconstructed inventory is insufficient"
         )
     known: dict[str, dict[str, Any]] = {}
+    site = cli.WIKI_SITES[parent["site"]]
     for member in parent["members"]:
         if member["kind"] not in {"current-page", "asset"}:
+            if _is_legacy_opensearch_resource(member, site=site):
+                # No parent resource is eligible for version/byte reuse here;
+                # the new crawl re-fetches and validates the XML as an asset.
+                continue
             if parent["history"] and member["kind"] in {
                 "revision", "generated-index", "historical-page",
             }:

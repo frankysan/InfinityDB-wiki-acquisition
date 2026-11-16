@@ -47,6 +47,14 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Fixed
 
+- **Acquisition:** Fixed a verified Rules Wiki `--update-from` blocker:
+  the legacy `opensearch_desc__u_b7ab2ebdc1fb.php` entry was
+  classified as unknown because MediaWiki's linked OpenSearch XML
+  description was mistaken for a wiki page. Fresh acquisitions now
+  classify/validate it as a non-HTML asset. Updates recognize only the
+  exact source-backed legacy endpoint and refetch its XML rather than
+  reusing unknown parent bytes; other unknown members remain rejected.
+  The original snapshot ZIP, provenance and inventory stay unchanged.
 - **Acquisition:** Completed P3.4 portable Rules Wiki layout migration:
   current page filenames now end in `.html` while root and language indexes
   keep their established paths. A page `Foo` and subpage `Foo/Bar` no

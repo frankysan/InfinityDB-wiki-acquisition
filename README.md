@@ -188,6 +188,14 @@ RecentChanges as observation evidence, performs fresh page enumeration,
 downloads every current HTML page and processes linked assets. A
 history-enabled parent retains/reconciles its oldids automatically.
 
+An older Rules Wiki archive may contain one member classified as `unknown`:
+`opensearch_desc__u_b7ab2ebdc1fb.php`. This is the linked MediaWiki
+OpenSearch XML description, not a wiki article. The updater now accepts
+**only this source-identifiable legacy case** from a fully verified parent:
+it discards the old unknown classification and fetches/validates the XML
+resource anew. It does not rewrite the parent, reuse the old unknown
+bytes, or accept unrelated unknown members.
+
 For a history parent whose former page IDs disappear from current
 enumeration, the default is to **stop rather than infer deletion**.
 You can explicitly retain those missing pages as historical-only records:
@@ -671,6 +679,7 @@ and [development and verification details](docs/DEVELOPMENT.md).
 | A required URL or revision failed | Check the printed error and preserved `*.work` path. Fix the source/connection issue, then resume with the same mode and options. A failed required source prevents publication. |
 | `--retry-failed-only` is refused | It requires `--resume-work` on an **ordinary** crawl whose full discovery checkpoint is complete. Use normal resume otherwise. |
 | Parent upgrade/update is rejected before fetching | Pass the actual ZIP, matching v3 manifest and matching inventory; verify the site/language and content identities. Reconstructed legacy inventories may lack required source metadata. |
+| `Unclassified member cannot be updated safely` | The known Rules Wiki `opensearch_desc__u_b7ab2ebdc1fb.php` case is handled by the current updater when its verified parent contains the expected source URL/path. Other unidentified members still block updates; inspect their inventory evidence rather than removing them or changing their type by hand. |
 | Resume refuses a parent or option mismatch | Use the **exact** parent triple and original mode/options. Do not copy a work directory to a different parent run or invent missing checkpoint evidence. |
 | Missing historical page IDs | Do not infer deletion. For history-enabled updates, optionally choose `--allow-historical-only`, understanding the v2 downstream compatibility requirement. |
 | Existing output or staging file blocks publication | Publication deliberately avoids overwrites. Inspect competing files and stale temporary evidence before choosing a new output directory or retrying; do not bulk-delete ignored source material. |

@@ -97,7 +97,7 @@ def test_rules_punctuation_encoded_slash_and_asset_case_are_distinct():
         )
 
 
-def _legacy_parent(tmp_path):
+def _legacy_parent(tmp_path, *, with_opensearch=False):
     work = tmp_path / "old-work"
     work.mkdir()
     pages = [
@@ -109,6 +109,23 @@ def _legacy_parent(tmp_path):
         FOO: b"<html><body>Old Foo</body></html>",
     }
     paths = {ROOT: "index.html", FOO: "Foo"}
+    if with_opensearch:
+        search_url = ROOT + "opensearch_desc.php"
+        legacy_site = SITE._replace(page_path_suffix="")
+        paths[search_url] = cli.local_relative_path(
+            search_url, asset=False, site=legacy_site,
+        )
+        contents[search_url] = (
+            b'<?xml version="1.0" encoding="utf-8"?>'
+            b'<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">'
+            b"<ShortName>Legacy Rules Wiki</ShortName></OpenSearchDescription>"
+        )
+        contents[ROOT] = (
+            b'<html><head><link rel="search" '
+            b'type="application/opensearchdescription+xml" '
+            b'href="/opensearch_desc.php"></head>'
+            b'<body><a href="/Foo">Foo</a></body></html>'
+        )
     for url, data in contents.items():
         (work / paths[url]).write_bytes(data)
     write_crawl_checkpoint(work / CHECKPOINT_FILENAME, {

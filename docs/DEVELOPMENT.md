@@ -101,6 +101,24 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P3.5a: A verified Rules Wiki link-only parent
+  `WIKI-en 20261115-223808` (820 members) contains exactly one
+  member of kind `unknown`: `opensearch_desc__u_b7ab2ebdc1fb.php`,
+  with the recorded source URL
+  `https://infinitythewiki.com/opensearch_desc.php`. The crawler
+  previously discovered the MediaWiki `rel=search` OpenSearch XML
+  description as a supposed page, saved its non-HTML response, and
+  correctly inventoried it as unknown. New crawls identify the
+  exact Rules Wiki XML service route as an asset, rewrite its link
+  accordingly, reject HTML challenges/malformed/non-OpenSearch XML,
+  and record it as a source-backed asset. Current updates may ignore
+  the *verified old classification* only for the same-origin endpoint
+  with exactly one observed source URL and a path matching a supported
+  historical/current Rules Wiki mapping. They **never** promote the
+  unknown parent bytes to an asset or reuse them conditionally. All
+  other unknown members remain blockers; the original parent triple
+  remains immutable. A synthetic parent/update/replay integration test
+  covers the exact legacy filename and new asset classification.
 - P3.4 uses the Rules Wiki's deterministic, Windows-portable `.html`
   current-page members (`Foo.html` versus `Foo/Bar.html`) and preserves
   generated `index.html`/`es/index.html`/`wiki/index.html` files.

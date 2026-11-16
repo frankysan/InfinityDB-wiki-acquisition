@@ -398,9 +398,13 @@ class LinkExtractor(HTMLParser):
             if hinted:
                 self.redirect_hints.append(unescape_html(hinted.group(1)))
         # A canonical/license link is a page reference, not a binary download.
-        # Stylesheets and preload hints can point to extensionless assets.
+        # Stylesheets, OpenSearch descriptors and preload hints are resources;
+        # their source file suffix need not identify their actual format.
         linked_resource = tag.lower() == "link" and (
             "stylesheet" in rel
+            or ("search" in rel and
+                (attributes.get("type") or "").casefold()
+                == "application/opensearchdescription+xml")
             or (
                 "preload" in rel
                 and (attributes.get("as") or "").casefold()
@@ -1110,9 +1114,39 @@ def is_mediawiki_namespace_page_url(url: str) -> bool:
     return False
 
 
+def is_opensearch_description_url(
+    url: str, *, site: WikiSite = DEFAULT_SITE,
+) -> bool:
+    """Recognize the Rules Wiki's MediaWiki OpenSearch XML endpoint.
+
+    This is a service resource, not a wiki page or an upload. Require the
+    exact known same-origin route; do not generalize arbitrary .php URLs.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    return (
+        site.key == INFINITY_WIKI_SITE.key
+        and parsed.scheme in {"http", "https"}
+        and (parsed.hostname or "").lower() in site.page_hosts
+        and parsed.path.casefold() in {
+            "/opensearch_desc.php",
+            "/wiki-es/opensearch_desc.php",
+        }
+    )
+
+
 def is_asset_url(url: str) -> bool:
     """Return whether a URL path is recognizably an asset resource."""
-    path = urllib.parse.urlsplit(url).path
+    parsed = urllib.parse.urlsplit(url)
+    if (
+        (not parsed.hostname
+         or (parsed.hostname or "").lower() in INFINITY_WIKI_SITE.page_hosts)
+        and parsed.path.casefold() in {
+            "/opensearch_desc.php", "opensearch_desc.php",
+            "/wiki-es/opensearch_desc.php", "wiki-es/opensearch_desc.php",
+        }
+    ):
+        return True
+    path = parsed.path
     decoded_path = urllib.parse.unquote(path).casefold()
     if decoded_path.startswith("/images/"):
         return True
@@ -1517,6 +1551,19 @@ def validate_asset_bytes(url: str, payload: bytes) -> None:
         or (b"<html" in header and b"</html" in payload[-1024:].lower())
     ):
         raise ValueError("HTML response received for an asset URL")
+    if is_opensearch_description_url(url):
+        from xml.etree import ElementTree
+
+        if b"<!DOCTYPE" in payload.upper():
+            raise ValueError("OpenSearch resource contains an unsupported XML DTD")
+        try:
+            document = ElementTree.fromstring(payload)
+        except ElementTree.ParseError as exc:
+            raise ValueError("Invalid OpenSearch description XML") from exc
+        if document.tag != (
+            "{http://a9.com/-/spec/opensearch/1.1/}OpenSearchDescription"
+        ):
+            raise ValueError("OpenSearch resource does not identify a description")
     signatures = {
         ".png": payload.startswith(b"\x89PNG\r\n\x1a\n"),
         ".jpg": payload.startswith(b"\xff\xd8\xff"),
