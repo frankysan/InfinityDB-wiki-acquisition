@@ -123,8 +123,14 @@ companion ZIP for independent link-rewrite verification, opt in **from the
 start**:
 
 ```powershell
-infinity-wiki-snapshot --site infinity-wiki --language en --source-replay-dir "local/data/wiki-source-replay"
+infinity-wiki-snapshot --site human-sphere --language en --source-replay
 ```
+
+`--source-replay` saves the companion ZIP in
+`local/data/wiki-source-replay`. To choose a different directory,
+use `--source-replay-dir "path/to/replays"` **instead**. The options
+are mutually exclusive and work for both source sites, including fresh
+crawls and `--update-from`.
 
 This is optional. It increases storage, does not preserve original HTML for
 historical oldid pages, and does **not** enable conditional HTML download
@@ -238,7 +244,8 @@ placeholders, not literal characters.
 | `--root DIRECTORY` | `local/data/wiki` | Destination for newly published, timestamped snapshot ZIPs. Existing ZIPs are not replaced. |
 | `--manifest-dir DIRECTORY` | `local/data/manifests/snapshots` | Destination for matching provenance JSON; inventory JSON goes in its `inventories/` subdirectory. Also determines default parent sidecar lookup locations. |
 | `--work-root DIRECTORY` | `local/work/wiki` | Parent directory for newly created `*.work` staging directories. A failed run retains its own staging directory here; a resumed run uses the explicit `--resume-work` path instead. |
-| `--source-replay-dir DIRECTORY` | Off | Create a **separate** original-HTML replay companion ZIP from a fresh crawl or `--update-from`. Ineligible with `--from-snapshot` because a history-only upgrade fetches no current HTML. On resume, use the same selection as the original run. |
+| `--source-replay` | Off | Produce the separate original-HTML replay ZIP in `local/data/wiki-source-replay` for a fresh crawl or `--update-from`. This is a shorthand for `--source-replay-dir local/data/wiki-source-replay`; cannot combine with `--source-replay-dir` or `--from-snapshot`. |
+| `--source-replay-dir DIRECTORY` | Off | Enable the same replay workflow with a custom output directory. Mutually exclusive with `--source-replay`. Ineligible with `--from-snapshot` because history-only upgrades fetch no current HTML. Use the same replay destination when resuming. |
 
 ### Recovery and help
 
@@ -252,10 +259,10 @@ placeholders, not literal characters.
 
 | Operation | Required | Optional/relevant | Not permitted |
 | --- | --- | --- | --- |
-| Fresh current snapshot | Source/language are optional | `--allpages` for Rules Wiki, `--source-replay-dir`, destinations | Parent selection flags |
-| Fresh with history | `--include-history` | `--allpages` for Rules Wiki, `--source-replay-dir`, destinations | Parent selection flags |
-| History upgrade | `--from-snapshot` + `--include-history` | `--from-manifest`, `--from-inventory`, `--resume-work` | `--update-from`, `--source-replay-dir`, `--retry-failed-only` |
-| Current-content update | `--update-from` | Parent sidecars, `--source-replay-dir`, `--resume-work`; history-related flags under their constraints | `--from-snapshot`, `--retry-failed-only` |
+| Fresh current snapshot | Source/language are optional | `--allpages` for Rules Wiki, `--source-replay` or `--source-replay-dir`, destinations | Parent selection flags |
+| Fresh with history | `--include-history` | `--allpages` for Rules Wiki, `--source-replay` or `--source-replay-dir`, destinations | Parent selection flags |
+| History upgrade | `--from-snapshot` + `--include-history` | `--from-manifest`, `--from-inventory`, `--resume-work` | `--update-from`, both source-replay options, `--retry-failed-only` |
+| Current-content update | `--update-from` | Parent sidecars, either source-replay option, `--resume-work`; history-related flags under their constraints | `--from-snapshot`, `--retry-failed-only` |
 | Ordinary resume | Same initial mode/site/language + `--resume-work` | `--allpages` and `--include-history` if selected initially | Changing the completed source scope |
 | Retry only failed crawl URLs | `--resume-work` + `--retry-failed-only` | Same source selection as the original ordinary crawl | Archive-derived modes; incomplete discovery |
 
@@ -393,7 +400,7 @@ rewritten links can also have changed. The new private
 link-only/allpages choice. An old work directory lacking that receipt or
 recording the former layout is refused rather than silently migrated.
 
-For a fresh, non-history crawl started with `--source-replay-dir`, use the
+For a fresh, non-history crawl started with either source-replay option, use the
 offline repair tool to **create a new work directory** from its committed
 checkpoint and retained original HTML bodies:
 
@@ -493,7 +500,8 @@ infinity-wiki-snapshot `
 ```
 
 Add the original `--allow-historical-only`, `--include-history` or
-`--source-replay-dir` options if they were selected when the update began.
+source-replay option if selected when the update began. Use the same
+destination when resuming.
 
 Archive-derived work contains a private `.wiki-archive-run.json` receipt
 binding the operation and options to the exact parent ZIP/manifest/inventory
@@ -527,7 +535,7 @@ The three filenames share their **actual snapshot stem**. With history,
 the archive prefix includes `-history`. Supported prefixes are
 `WIKI-en`, `WIKI-es` and `HUMAN-SPHERE`.
 
-With `--source-replay-dir`, a separate **fourth optional artifact** named
+With `--source-replay` or `--source-replay-dir`, a separate **fourth optional artifact** named
 `<archive stem>.source-replay.zip` preserves the exact original current-page
 HTML alongside a versioned index. It is bound to the three published
 artifacts by SHA-256. It is not part of the standard snapshot ZIP and is
@@ -671,8 +679,13 @@ external links, not missing required wiki downloads.
 No evidence justifies copying Human Sphere's permissive 404,
 namespace, thumbnail or alias-host policies. See
 [source-policy evidence and decisions](docs/RULES_WIKI_SOURCE_POLICY.md).
-The separate Spanish history acquisition is not covered by this
-current-content acceptance.
+The separate Spanish history artifact `WIKI-es-history
+20261116-101038` also passed independent offline acceptance:
+3,802 members, 2,655 revisions and 930 byte-preserved current
+HTML pages, with matching parent lineage. It relies on the
+already verified Spanish current-source replay; history-only
+upgrades have no separate replay companion. Downstream
+consumer compatibility remains a separate acceptance task.
 
 ### Rules Wiki allpages coverage audit
 

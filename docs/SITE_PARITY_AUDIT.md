@@ -170,18 +170,21 @@ continue through the parent-bound checkpoint contract.
    namespace-looking source URLs, asset hosts, `/wiki-es/` service
    routes, and intentionally ignored/external references. No further
    Human Sphere-specific ignore, host, 404, thumbnail, or pacing
-   exception was justified by either archive. Spanish history
-   acceptance remains independent.
+   exception was justified by either archive. The subsequently
+   published Spanish history child was independently verified under
+   P3.6e; the source-policy decision remains unchanged.
 4. **Lower:** Rules Wiki punctuation folding and case-only asset paths now
    disambiguate. Retain Human Sphere's current fail-closed safeguards until
    real residual cases justify changes; inspect cross-origin asset-path
    conflicts and true source aliases before extending their policies.
-5. **Remaining acceptance:** English current/history and Spanish
-   current-content artifacts have passed independent checks. Verify the
-   Spanish history-enabled child when its acquisition finishes,
-   then downstream InfinityDB consumer compatibility against an
-   exact pinned revision. This source-policy audit makes no
-   cross-repository edits, deployments or live HTML fetches.
+5. **Remaining acceptance:** English and Spanish current-content
+   and history archives have all passed independent offline checks.
+   Verify downstream InfinityDB consumer compatibility against an
+   exact pinned consumer revision. A separate live Spanish allpages
+   re-enumeration, if needed for a same-time coverage comparison,
+   would be an independent optional check. This source-policy
+   audit makes no cross-repository edits, deployments or live
+   HTML fetches.
 
 The exact rendered-page freshness/source-time limitations in
 [RENDER_FRESHNESS_AUTHORITY.md](RENDER_FRESHNESS_AUTHORITY.md)

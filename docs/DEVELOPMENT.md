@@ -119,9 +119,14 @@ Agents start with [AGENTS.md](../AGENTS.md).
   alias requirements were evidenced. `Categoría:`/`Plantilla:`
   are observed title prefixes rather than API-verified namespace
   IDs. No new broad Human Sphere policy exceptions are justified.
-  P3.5b/c are complete; the separate Spanish history artifact,
-  allpages live re-enumeration and consumer handoff have not yet
-  been independently accepted.
+  P3.5b/c are complete. The separate Spanish history artifact
+  `WIKI-es-history 20261116-101038` subsequently passed
+  independent ZIP/provenance/inventory and exact parent-lineage
+  verification (930 inherited pages and 216 assets, 2,655 oldid
+  revisions, one history index, zero unknown members). The
+  parent replay already verified 930 original HTML bodies.
+  A later live Spanish allpages re-enumeration and downstream
+  InfinityDB consumer handoff remain separate acceptance tasks.
 - P3.5b: The read-only `tools.audit_rules_source_policy` tool
   independently verifies the ZIP/v3 manifest/inventory for the English
   Rules Wiki before inspecting recorded page source URLs, namespace-
@@ -537,8 +542,14 @@ Agents start with [AGENTS.md](../AGENTS.md).
   their original acquisition evidence; historical-only pages/oldids do
   not acquire new current-response claims.
 
-  P2.4c.2b.1 adds opt-in `--source-replay-dir` to normal fresh and
-  update acquisitions. The crawler atomically stores each exact pre-rewrite
+  P2.4c.2b.1 adds opt-in source replay to normal fresh and
+  update acquisitions. The operator-facing `--source-replay` shorthand
+  selects `local/data/wiki-source-replay`; `--source-replay-dir PATH`
+  selects a custom destination. They are mutually exclusive and normalize
+  to the same internal `source_replay_dir` option, preserving existing
+  replay, parent-update and resume behavior. Both remain unavailable for
+  history-only `--from-snapshot` because it fetches no current HTML.
+  The crawler atomically stores each exact pre-rewrite
   current-page HTTP body in private `.wiki-original-html/<SHA-256 URL>.html`,
   never in the normal mirror file set or existing ZIP. On success, after
   independent verification of the ZIP, v3 manifest and v1/v2 inventory,

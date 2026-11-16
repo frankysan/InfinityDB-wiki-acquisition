@@ -192,8 +192,12 @@ def test_prior_etag_alone_never_qualifies_without_exact_request_profile(tmp_path
         )
 
 
+@pytest.mark.parametrize("replay_args,output_dir", [
+    (["--source-replay"], "local/data/wiki-source-replay"),
+    (["--source-replay-dir", "companions"], "companions"),
+])
 def test_cli_fresh_opt_in_produces_companion_without_changing_snapshot_format(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, replay_args, output_dir,
 ):
     monkeypatch.chdir(tmp_path)
     child = cli.page_url_from_title("Other", site=SITE, language=LANG)
@@ -230,27 +234,80 @@ def test_cli_fresh_opt_in_produces_companion_without_changing_snapshot_format(
         "--root", "archives",
         "--work-root", "work",
         "--manifest-dir", "manifests",
-        "--source-replay-dir", "companions",
+        *replay_args,
     ]) == 0
     archive = next((tmp_path / "archives").glob("*.zip"))
     manifest = next((tmp_path / "manifests").glob("*.json"))
     inventory = next((tmp_path / "manifests/inventories").glob("*.json"))
-    bundle = next((tmp_path / "companions").glob("*.zip"))
+    bundle = next((tmp_path / output_dir).glob("*.zip"))
     replay = verify_source_replay_bundle(bundle, archive, manifest, inventory)
     assert len(replay["pages"]) == 2
     assert verify_snapshot(archive, manifest, inventory)["formatVersion"] == 1
     assert not list((tmp_path / "work").glob("*.work"))
 
 
+@pytest.mark.parametrize("replay_args", [
+    ["--source-replay"],
+    ["--source-replay-dir", "companions"],
+])
 def test_history_only_upgrade_does_not_synthesize_a_new_source_companion(
-    tmp_path, capsys,
+    tmp_path, capsys, replay_args,
 ):
     assert cli.main([
         "--from-snapshot", str(tmp_path / "does-not-exist.zip"),
         "--include-history",
-        "--source-replay-dir", str(tmp_path / "companions"),
+        *replay_args,
     ]) == 1
     assert "requires fresh current HTML acquisition" in capsys.readouterr().err
+
+def test_source_replay_flag_defaults_and_explicit_directory_are_equivalent():
+    from pathlib import Path
+
+    assert cli.parse_args([]).source_replay_dir is None
+    assert cli.parse_args(["--source-replay"]).source_replay_dir == Path(
+        "local/data/wiki-source-replay"
+    )
+    assert cli.parse_args([
+        "--source-replay-dir", "my/replays",
+    ]).source_replay_dir == Path("my/replays")
+
+
+def test_source_replay_shorthand_and_dir_cannot_be_combined(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.parse_args([
+            "--source-replay", "--source-replay-dir", "my/replays",
+        ])
+    assert exc.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("replay_args,expected", [
+    (["--source-replay"], "local/data/wiki-source-replay"),
+    (["--source-replay-dir", "custom/replay"], "custom/replay"),
+])
+def test_update_cli_passes_replay_destination_to_existing_update_workflow(
+    monkeypatch, replay_args, expected,
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+    import infinity_wiki_acquisition.snapshot_update as update_module
+
+    captured = []
+
+    def update(*args, **kwargs):
+        captured.append((args, kwargs))
+        return SimpleNamespace(
+            reused_members=0, changed_members=0, new_members=0,
+            removed_members=0, moved_pages=0, history_revisions=0,
+            historical_only_pages=0, archive=Path("child.zip"),
+            manifest=Path("child.json"), inventory=Path("child.inventory.json"),
+            source_replay=Path(expected) / "child.source-replay.zip",
+        )
+
+    monkeypatch.setattr(update_module, "update_snapshot", update)
+    assert cli.main(["--update-from", "parent.zip", *replay_args]) == 0
+    assert len(captured) == 1
+    assert captured[0][1]["source_replay_directory"] == Path(expected)
 
 
 def test_checkpoint_private_html_path_is_url_scoped(tmp_path):

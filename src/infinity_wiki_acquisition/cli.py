@@ -2155,13 +2155,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("local/data/wiki"),
         help="Directory used to store timestamped wiki ZIP snapshots (default: local/data/wiki)",
     )
-    parser.add_argument(
+    replay_options = parser.add_mutually_exclusive_group()
+    replay_options.add_argument(
+        "--source-replay",
+        dest="source_replay_dir",
+        action="store_const",
+        const=Path("local/data/wiki-source-replay"),
+        help=(
+            "Retain original current-page HTML in a separate replay ZIP under "
+            "local/data/wiki-source-replay (fresh crawls and --update-from only)."
+        ),
+    )
+    replay_options.add_argument(
         "--source-replay-dir",
+        dest="source_replay_dir",
         type=Path,
         help=(
-            "Opt-in separate ZIP companion of original current-page HTML, "
-            "for independently verified offline link/discovery replay. "
-            "Does not enable HTML download skipping; unavailable with --from-snapshot."
+            "Retain original current-page HTML in a separate replay ZIP "
+            "under a custom directory. Cannot combine with --source-replay; "
+            "unavailable with --from-snapshot."
         ),
     )
     parser.add_argument(
@@ -2462,6 +2474,23 @@ def main(argv: list[str] | None = None) -> int:
             if not resume_path.is_dir():
                 raise ValueError(f"Wiki resume work directory does not exist: {resume_path}")
             staging_path = resume_path
+            # A legacy/pre-checkpoint directory may contain tens of
+            # thousands of downloaded files without their URL/queue map.
+            # Resuming it would silently start a fresh enumeration and
+            # overwrite rewritten HTML, losing recovery evidence. Preserve
+            # such work until its original checkpoint can be restored.
+            if (
+                site.key == HUMAN_SPHERE_SITE.key
+                and not (staging_path / CHECKPOINT_FILENAME).is_file()
+                and any(child.name != ".wiki-fresh-discovery.json"
+                        for child in staging_path.iterdir())
+            ):
+                raise ValueError(
+                    "Cannot resume nonempty Wiki work without its private "
+                    ".wiki-crawl-checkpoint.json; no saved URL/queue identities "
+                    "can be verified. Preserve this directory and recover its "
+                    "original checkpoint, or start a separate fresh acquisition."
+                )
         else:
             staging_path = create_wiki_work_directory(
                 work_root,

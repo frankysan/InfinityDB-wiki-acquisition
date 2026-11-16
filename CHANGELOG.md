@@ -20,6 +20,11 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added `--source-replay` as a shorthand for enabling
+  original-HTML replay companions in `local/data/wiki-source-replay`.
+  The existing `--source-replay-dir PATH` remains available for custom
+  destinations. Both options share the same implementation, are mutually
+  exclusive and remain unavailable for history-only upgrades.
 - **Acquisition:** Added the independently installable
   `infinity-wiki-acquisition` package and `infinity-wiki-snapshot` command for
   English and Spanish Infinity Wiki snapshots and English-only Human Sphere
@@ -102,7 +107,11 @@ from the downloader and shared archive/provenance Git history and the
   external quick-start PDF links lie outside approved acquisition
   hosts. Human Sphere-specific namespace, thumbnail, alias and
   404 policies remain deliberately unchanged for both languages.
-  Spanish history acceptance remains separate.
+  The later `WIKI-es-history 20261116-101038` archive independently
+  passed ZIP/provenance/inventory and parent-lineage checks:
+  2,655 revisions, 930 unchanged parent current pages and 216
+  unchanged assets, with zero unknown members. Downstream
+  consumer compatibility remains separate.
 - **Acquisition:** Added a read-only offline operator acceptance command,
   `python -m tools.verify_snapshot_acceptance`, to independently verify
   ZIP/v3 manifest/inventory, original HTML replay and exact immutable-parent

@@ -5,11 +5,11 @@ Date: 2026-11-16. Audited the independently verified English
 `WIKI-es 20261116-092640` current-content snapshots using the
 **read-only, offline** `python -m tools.audit_rules_source_policy`
 command. Their ZIPs, provenance/inventories and original HTML replay
-companions independently verify. The separate English history child
-`WIKI-en-history 20261116-090844` has also passed verification;
-Spanish history was still being acquired during this review.
-This audit examines **current HTML and assets**, not inferred
-rules about old rendered revisions.
+companions independently verify. Both independent history children, `WIKI-en-history 20261116-090844`
+and `WIKI-es-history 20261116-101038`, have since passed
+ZIP/provenance/inventory and exact parent-lineage verification.
+The P3.5 source-policy audit examines **current HTML and assets**,
+not inferred rules about old rendered revisions.
 
 This is an inspection of captured source URLs, provenance, page references
 and ignored URLs. It does **not** assert that the archive contains every
@@ -119,9 +119,12 @@ observation.
 OpenSearch and ResourceLoader handling works. No new 404,
 namespace, host alias, thumbnail or pacing exception is justified
 by the verified Spanish archive. Both P3.5b (English) and P3.5c
-(Spanish) source-policy evidence reviews are complete; the
-Spanish history acquisition and downstream consumer acceptance
-are separate workflows.
+(Spanish) source-policy evidence reviews are complete. The
+Spanish history upgrade subsequently passed independent acceptance
+under P3.6e: 2,655 oldid revisions, 930 retained current pages,
+216 assets and one generated history index, with zero unknown
+members and exact parent lineage. Downstream InfinityDB consumer
+acceptance remains a separate workflow.
 
 ## Repeatable read-only command
 
