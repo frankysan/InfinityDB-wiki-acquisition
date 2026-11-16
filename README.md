@@ -429,48 +429,36 @@ additional provenance contracts.
 
 ### Interrupted history upgrade
 
-**Real Rules Wiki recovery (2026-11-16):** A full-history upgrade of
-`WIKI-en 20261116-075926` stopped at the inherited
-`https://infinitythewiki.com/api.php` service endpoint after saving
-2,801 oldids across 709 of 711 archived current pages. That URL is
-an HTTP API service, **not** an ordinary MediaWiki article; the
-revision API explicitly reported the page title missing.
-This is a narrow, documented exception: the original `api.php.html`
-member stays intact in the history ZIP, with a zero-revisions entry
-and an explicit `historyExclusion` reason, exact API query URL and
-response SHA-256. No revision is fabricated. Other missing wiki pages
-or failed revision requests remain fatal.
+**Completed Rules Wiki recovery (2026-11-16):** The first history
+upgrade of `WIKI-en 20261116-075926` stopped at the inherited
+`https://infinitythewiki.com/api.php` service endpoint after
+saving 2,801 oldids for 709 of 711 current pages. That URL is an
+HTTP API service, **not** an ordinary MediaWiki article; the revision
+API reported the page title missing. An explicit, source-evidenced
+`historyExclusion` with no invented revision allowed a safe resume.
+The completed `WIKI-en-history 20261116-090844` independently
+verified: **3,734 members, 2,801 revisions, all 711 parent
+current pages preserved byte-for-byte, 221 assets and exact parent
+lineage**. The actual `_history/index.json` contains the
+`api.php.html` entry with zero revisions, query URL, exclusion reason
+and response SHA-256. Other missing pages or failed revision requests
+are still fatal. Later fresh/current crawls ignore that service URL.
 
-A read-only check verified the exact parent triple, work receipt,
-page-list identity and all 2,801 checkpointed oldid files. To repeat
-that preflight on your workstation:
+For any **currently interrupted** history-only upgrade, use the
+read-only preflight against the *existing* private work directory and
+exact parent triple:
 
 ```powershell
 python -m tools.inspect_history_resume `
-  "local/data/wiki/WIKI-en 20261116-075926.zip" `
-  "local/data/manifests/snapshots/WIKI-en 20261116-075926.json" `
-  "local/data/manifests/snapshots/inventories/WIKI-en 20261116-075926.inventory.json" `
-  --work "local/work/wiki/WIKI-en-history 20261116-081423.work"
+  "path/to/parent.zip" `
+  "path/to/parent.json" `
+  "path/to/parent.inventory.json" `
+  --work "path/to/preserved.work"
 ```
 
-Resume **the same history-upgrade run**; do not delete or migrate the
-preserved work or use ordinary `--retry-failed-only`:
-
-```powershell
-infinity-wiki-snapshot `
-  --from-snapshot "local/data/wiki/WIKI-en 20261116-075926.zip" `
-  --include-history `
-  --resume-work "local/work/wiki/WIKI-en-history 20261116-081423.work"
-```
-
-All completed oldid files remain available for checked reuse; only
-uncommitted in-flight work may repeat. The exact parent ZIP, manifest
-and inventory must remain unchanged. Later fresh/current acquisitions
-ignore the `/api.php` API endpoint as a service URL rather than
-misclassifying it as a wiki page. A history-only upgrade cannot
-retroactively reclassify or discard that inherited source file.
-
-For other interrupted history runs:
+Once the cause has been fixed, resume **the same run**, not a new
+acquisition. Do not delete the work directory or use ordinary
+`--retry-failed-only`:
 
 ```powershell
 infinity-wiki-snapshot `
@@ -480,6 +468,13 @@ infinity-wiki-snapshot `
   --include-history `
   --resume-work "path/to/preserved.work"
 ```
+
+Committed revision files are checked and reused; a noncommitted
+in-flight batch may repeat. The original parent ZIP, manifest and
+inventory are not changed. **A successful run normally deletes its
+private work directory**; the historical
+`WIKI-en-history 20261116-081423.work` is not an active recovery
+target after successful publication.
 
 ### Interrupted current-content update
 
@@ -644,6 +639,40 @@ these checks: 932 members, 711 current HTML pages (all replayed), 221
 assets, zero unknown members and zero parent page URLs lost. A separate
 read-only API comparison found all **650** main-namespace source URLs
 present, with zero page-ID mismatches.
+
+### Rules Wiki source-specific policy audit (offline)
+
+For an existing independently verified Rules Wiki current-content
+archive, use the P3.5 source-policy auditor to examine source URL and
+namespace prefixes, media host distribution, thumbnail candidates,
+ignored URL reasons, known service endpoints, and unresolved references.
+This is **read-only and offline**:
+
+```powershell
+python -m tools.audit_rules_source_policy `
+  "local/data/wiki/WIKI-en 20261116-075926.zip" `
+  "local/data/manifests/snapshots/WIKI-en 20261116-075926.json" `
+  "local/data/manifests/snapshots/inventories/WIKI-en 20261116-075926.inventory.json"
+```
+
+The verified English archive contains 209 Corvus Belli-hosted
+assets, 11 query-distinct wiki `load.php` resources and one
+OpenSearch XML descriptor. The independently verified Spanish archive,
+`WIKI-es 20261116-092640`, contains 207 Corvus Belli assets,
+eight `/wiki-es/load.php` resources and one Spanish OpenSearch XML.
+For a Spanish audit, substitute its stem into all three paths above.
+
+Both current snapshots and their original-HTML replay companions
+passed independent verification; neither has a standard MediaWiki
+upload thumbnail or an unclassified member. The Spanish archive also
+contains eight references to an out-of-scope Corvus Belli
+quick-start PDF at `downloads.corvusbelli.com`; these are
+external links, not missing required wiki downloads.
+No evidence justifies copying Human Sphere's permissive 404,
+namespace, thumbnail or alias-host policies. See
+[source-policy evidence and decisions](docs/RULES_WIKI_SOURCE_POLICY.md).
+The separate Spanish history acquisition is not covered by this
+current-content acceptance.
 
 ### Rules Wiki allpages coverage audit
 

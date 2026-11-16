@@ -101,6 +101,44 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P3.5c: The independently verified Spanish current source
+  `WIKI-es 20261116-092640` has 930 current pages and 216 assets,
+  and its separate original-source replay verified all 930 pages.
+  The inventory records 870 main-namespace numeric IDs and has no
+  unknown members. A read-only P3.5 source-policy audit found 207
+  Corvus Belli-hosted assets, eight query-distinct
+  `/wiki-es/load.php` style/script assets and one Spanish
+  `/wiki-es/opensearch_desc.php` XML resource. Five ignored URLs
+  comprise three `/es/Infinity:` project pages, the optional
+  favicon and the exact `/wiki-es/api.php` service endpoint.
+  Eight external quick-start PDF references all target
+  `downloads.corvusbelli.com` and are outside the allowed
+  source-host policy; they are not unfulfilled required wiki
+  downloads. No MediaWiki upload thumbnail originals, Talk pages,
+  `rest.php`/`cdn-cgi` URLs, optional HTTP 404 omissions or host
+  alias requirements were evidenced. `Categoría:`/`Plantilla:`
+  are observed title prefixes rather than API-verified namespace
+  IDs. No new broad Human Sphere policy exceptions are justified.
+  P3.5b/c are complete; the separate Spanish history artifact,
+  allpages live re-enumeration and consumer handoff have not yet
+  been independently accepted.
+- P3.5b: The read-only `tools.audit_rules_source_policy` tool
+  independently verifies the ZIP/v3 manifest/inventory for the English
+  Rules Wiki before inspecting recorded page source URLs, namespace-
+  looking prefixes, references, ignored URLs, asset hosts, MediaWiki
+  thumb-to-original candidates and source-service paths. The verified
+  `WIKI-en 20261116-075926` source evidence shows 711 HTML pages,
+  209 `assets.corvusbelli.net/wiki/` asset URLs, 11 query-distinct
+  `load.php` resources and one `opensearch_desc.php` XML asset.
+  No standard MediaWiki `/images/thumb/` evidence, optional 404
+  omissions, `Talk:` source pages, alternate host aliases or
+  `rest.php`/`cdn-cgi` reference paths were observed; 711
+  nonarchived page references point only to the intentionally ignored
+  favicon. These are **English archive observations**, not evidence
+  that Spanish uses identical routing or that the live source has
+  remained unchanged. Preserve the Rules Wiki's strict 404/host/
+  namespace rules. See `docs/RULES_WIKI_SOURCE_POLICY.md` for the
+  decision matrix and Spanish acceptance criterion.
 - P3.5a: A verified Rules Wiki link-only parent
   `WIKI-en 20261115-223808` (820 members) contains exactly one
   member of kind `unknown`: `opensearch_desc__u_b7ab2ebdc1fb.php`,

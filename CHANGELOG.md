@@ -54,9 +54,12 @@ from the downloader and shared archive/provenance Git history and the
   preserve that current artifact with an explicit zero-revisions
   `historyExclusion` record (reason, query URL, response SHA-256).
   The exception does not cover normal missing wiki titles or network
-  failures. The existing 709-page/2,801-oldid checkpoint remains
-  resumable without rewriting its parent or source evidence. New
-  crawls ignore the API service URL as non-content.
+  failures. The existing 709-page/2,801-oldid checkpoint resumed
+  successfully without rewriting its parent or source evidence,
+  publishing `WIKI-en-history 20261116-090844`. Independent
+  verification passed for all 2,801 revisions, 711 inherited current
+  pages, 221 assets and exact parent lineage. New crawls ignore the
+  API service URL as non-content.
 - **Acquisition:** Fixed a verified Rules Wiki `--update-from` blocker:
   the legacy `opensearch_desc__u_b7ab2ebdc1fb.php` entry was
   classified as unknown because MediaWiki's linked OpenSearch XML
@@ -85,6 +88,21 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added a read-only Rules Wiki source-policy audit
+  command and evidence review for the independently verified English
+  `WIKI-en 20261116-075926` snapshot. Its 221 assets comprise 209
+  Corvus Belli-hosted files, 11 query-distinct same-host `load.php`
+  resources and one OpenSearch descriptor; there are no standard
+  MediaWiki upload thumbnails, observed Talk pages, or optional 404
+  omissions. The independently verified `WIKI-es 20261116-092640`
+  archive and all 930 original-HTML replay pages subsequently passed
+  acceptance; its 216 assets comprise 207 Corvus Belli files,
+  eight `/wiki-es/load.php` resources and one Spanish OpenSearch XML.
+  Five service/project/favicon URLs are intentionally ignored; eight
+  external quick-start PDF links lie outside approved acquisition
+  hosts. Human Sphere-specific namespace, thumbnail, alias and
+  404 policies remain deliberately unchanged for both languages.
+  Spanish history acceptance remains separate.
 - **Acquisition:** Added a read-only offline operator acceptance command,
   `python -m tools.verify_snapshot_acceptance`, to independently verify
   ZIP/v3 manifest/inventory, original HTML replay and exact immutable-parent
@@ -92,8 +110,9 @@ from the downloader and shared archive/provenance Git history and the
   The real 2026-11-16 Rules Wiki update passed with 932 members,
   711 replay-verified HTML pages, 221 assets, zero unknown members and
   no missing parent page URLs. The live API audit matched all 650
-  main-namespace page URLs and page IDs. History and downstream consumer
-  acceptance remain separate.
+  main-namespace page URLs and page IDs. English history acceptance
+  subsequently passed for `WIKI-en-history 20261116-090844`;
+  downstream consumer acceptance remains separate.
 - **Acquisition:** Added a Rules Wiki path-layout receipt to ordinary
   fresh crawl checkpoints, preventing old extensionless work from silently
   resuming with changed rewritten links. The offline original-HTML

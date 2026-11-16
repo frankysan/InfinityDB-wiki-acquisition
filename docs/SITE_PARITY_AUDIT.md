@@ -2,14 +2,14 @@
 
 Initial comparison reviewed 2026-11-15 at repository
 `02173fca4f89e5fa57ec8e4939c05f8672e6733a`; the report was then
-updated for P3.3 and P3.4 implementations. P3.3 independently probed
-the actual English/Spanish MediaWiki API endpoints and completed a
-read-only English archive/allpages comparison. P3.4 portable-path
-migration and artifact lineage were verified by offline integration
-tests. **No live HTML content crawl or new production snapshot was
-performed as part of these implementation steps.** Namespace policy,
-asset/thumbnail configuration, aliases, and downstream consumer
-compatibility have not been comprehensively verified against production.
+updated for P3.3/P3.4 implementation and P3.5b English source-policy
+acceptance. P3.3 independently probed the English/Spanish MediaWiki
+APIs, and P3.4 portable-path migration passed offline integration
+tests. The real English current and history artifacts were subsequently
+published and independently verified on 2026-11-16 (P3.6a/c).
+P3.5b inspected the **verified English current archive** without
+contacting the source. Spanish source-policy behavior and downstream
+consumer compatibility have not yet been accepted.
 
 ## Shared protections already in place
 
@@ -42,12 +42,12 @@ These protections **do not** need separate Rules Wiki implementations:
 | **Unicode versus ASCII** | Non-ASCII page and asset names receive stable NFC-based disambiguation instead of colliding with ASCII transliterations | Previously no Unicode disambiguation; **enabled for Rules Wiki page and asset paths in this review** | **Fixed**. E.g. `Ca%C3%B1on` and `Canon` are distinct on Windows/Linux; Unicode normalization is tested |
 | **Page/directory collisions** | `page_path_suffix=".html"` separates page `/Foo` from descendants `/Foo/Bar` | Now uses `.html` for ordinary source pages while retaining generated `index.html` | **P3.4 fixed:** `Foo.html` and `Foo/Bar.html` can coexist. Old Rules Wiki snapshots stay unchanged; new updates use the corrected layout with full source HTML refetch and exact parent lineage |
 | **Other path normalization** | Case and Unicode safeguards; residual punctuation/asset casing may still fail closed | P3.4 adds component-level URL decoding, punctuation/encoded-separator markers, asset casing, generated-index reservation and host-independent Windows-portable names | **P3.4 fixed for Rules Wiki:** source-identity suffixes distinguish previously lossy URL components; Human Sphere continues its existing fail-closed policy. Cross-origin/local-path and unusual source aliases still require explicit evidence, not silent merging |
-| **MediaWiki thumbnail originals** | From a standard same-site `/images/thumb/.../` derivative, also attempts original `/images/.../` upload; records candidate source evidence | The thumbnail-to-original rule is currently enabled only for Human Sphere; Rules Wiki also has a distinct `assets.corvusbelli.net` host | **Conditional**. Enable only for verified same-site standard MediaWiki thumbnails if present; never fabricate originals from external/static asset URLs |
-| **Noncontent namespaces** | Ignores `Talk:` and the configured project namespace | Ignores `Infinity:` project namespace, but **not** `Talk:` | **Medium: site-policy review**. Confirm that excluding Rules Wiki talk pages is appropriate for intended source coverage before changing ignored URL classes |
+| **MediaWiki thumbnail originals** | From a standard same-site `/images/thumb/.../` derivative, also attempts original `/images/.../` upload; records candidate source evidence | Verified English/Spanish current snapshots have **209/207** Corvus Belli-hosted assets respectively and **zero** standard same-site MediaWiki `/images/thumb/` paths | **P3.5b/c evidence:** no thumbnail derivation is justified in either language; it would invent unobserved original URLs |
+| **Noncontent namespaces** | Ignores `Talk:` and the configured project namespace | The verified English acquisition ignored three `Infinity:` project pages; it captured 58 `Category:` pages and one `Template:` page; no `Talk:` pages were observed | **P3.5b English evidence:** do not widen ignored namespaces without observed source justification; unrelated colon-bearing titles are ordinary page names |
 | **Service endpoints** | Ignores paths under `/rest.php/` and `/cdn-cgi/` | The Rules Wiki OpenSearch XML descriptor is now classified as a resource, not a wiki page; `index.php` and `Special:` remain skipped by shared logic | **P3.5a narrowly fixed:** previously archived `opensearch_desc.php` was the only unclassified member in the verified English parent, and is re-fetched as XML on update. Broader namespace and service-endpoint exclusions still require live evidence, particularly for `/wiki-es/` |
-| **Discovered HTTP 404s** | May ignore a 404 for a *non-required linked* page/asset; an allpages-required page remains mandatory | All discovered eligible 404s are failures unless explicitly ignored by another rule | **Source-specific by design** until live evidence shows stale optional links are common; do not copy 404 ignoring to the Rules Wiki unconditionally |
-| **Host canonicalization** | Both `human-sphere.com` and `www.human-sphere.com` normalize to one origin | Only `infinitythewiki.com` is recognized as a page host | **Conditional**. Confirm whether `www.`/other aliases actually serve the same installation before adding them |
-| **Courtesy pacing** | 0.5 s per source request | No configured delay; common HTTP backoff still retries transient failures | **Operational difference**, not a known bug; revisit based on source limits or real 429/503 observations |
+| **Discovered HTTP 404s** | May ignore a 404 for a *non-required linked* page/asset; an allpages-required page remains mandatory | All discovered eligible 404s remain failures; the verified English snapshot has **zero optional 404 omissions** | **P3.5b English evidence:** retain strict completeness; no reason to generalize Human Sphere's optional 404 policy |
+| **Host canonicalization** | Both `human-sphere.com` and `www.human-sphere.com` normalize to one origin | All 711 English pages are on `infinitythewiki.com`; 209 external assets use the explicitly approved `assets.corvusbelli.net` host | **P3.5b English evidence:** no additional alias needed by the reviewed archive; do not infer equivalence from hostname similarity |
+| **Courtesy pacing** | 0.5 s per source request | No configured delay; common HTTP backoff still retries transient failures | **P3.5b English evidence:** completed acquisition had no reported rate-limit failures; preserve current behavior unless the source requires more pacing |
 | **Localization / output** | English only, `HUMAN-SPHERE`, page `.html` suffix | Separate en/es wiki/API roots, `WIKI-en`/`WIKI-es`, and now portable page `.html` members | **Intentional**. Root and language index paths, source URLs, page IDs and archived historical identities remain independent of local member names |
 
 ### P3.3 observed API coverage and new opt-in full discovery
@@ -152,28 +152,36 @@ continue through the parent-bound checkpoint contract.
 
 ## Next steps
 
-1. **P3.3 implemented:** English/Spanish API probes, English
-   archive-versus-source coverage comparison and an explicit opt-in
-   full-discovery mode are complete. For actual acceptance, run a full
-   source update/new `--allpages` snapshot and independently verify its
-   artifacts; a full Spanish archive comparison remains unperformed.
+1. **P3.3 and P3.6a/c English accepted:** English/Spanish API probes and
+   opt-in full enumeration are implemented. The 2026-11-16 English
+   `--update-from` snapshot verified its current-page ZIP, provenance,
+   inventory and original-HTML replay; its 650 main-namespace API URLs
+   all matched the later source listing. The subsequently resumed
+   history upgrade independently verified all 2,801 oldids and its
+   parent lineage. Full Spanish archival acceptance remains unperformed.
 2. **P3.4 implemented:** Added deterministic portable filenames, versioned
    work-mode/layout receipts, offline fresh-work migration, and immutable
    parent-to-child update tests for English/Spanish routing, old/current
    history, source HTML replay and ZIP verification.
-3. **Medium:** Study actual Rules Wiki namespace/service endpoints, optional
-   404 responses, MediaWiki thumbnail/imageinfo and host aliases from
-   **source evidence** before extending any Human Sphere source-specific
-   exception. Retain fail-closed source coverage by default.
+3. **P3.5b/c English and Spanish source-policy audits complete:**
+   See [Rules Wiki source-policy evidence](RULES_WIKI_SOURCE_POLICY.md)
+   for the independently verified 932-member English and
+   1,146-member Spanish current snapshots, their original HTML replay,
+   namespace-looking source URLs, asset hosts, `/wiki-es/` service
+   routes, and intentionally ignored/external references. No further
+   Human Sphere-specific ignore, host, 404, thumbnail, or pacing
+   exception was justified by either archive. Spanish history
+   acceptance remains independent.
 4. **Lower:** Rules Wiki punctuation folding and case-only asset paths now
    disambiguate. Retain Human Sphere's current fail-closed safeguards until
    real residual cases justify changes; inspect cross-origin asset-path
    conflicts and true source aliases before extending their policies.
-5. **Acceptance:** Run focused offline parity tests, then verify actual
-   fresh ZIP/v3 manifest/v1 inventory/source replay, followed by
-   a separate history upgrade after intended current-page coverage is
-   established. No external crawl or cross-repository deployment is
-   part of this audit.
+5. **Remaining acceptance:** English current/history and Spanish
+   current-content artifacts have passed independent checks. Verify the
+   Spanish history-enabled child when its acquisition finishes,
+   then downstream InfinityDB consumer compatibility against an
+   exact pinned revision. This source-policy audit makes no
+   cross-repository edits, deployments or live HTML fetches.
 
 The exact rendered-page freshness/source-time limitations in
 [RENDER_FRESHNESS_AUTHORITY.md](RENDER_FRESHNESS_AUTHORITY.md)
