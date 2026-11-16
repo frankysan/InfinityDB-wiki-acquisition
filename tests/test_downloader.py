@@ -162,8 +162,8 @@ def test_rewrite_relative_links_to_local_paths() -> None:
         language="en",
         os_name="Windows",
     )
-    assert 'href="wiki/Main_Page"' in rewritten
-    assert 'href="wiki/Main_Page#Contents"' in rewritten
+    assert 'href="wiki/Main_Page.html"' in rewritten
+    assert 'href="wiki/Main_Page.html#Contents"' in rewritten
     assert 'src="assets/logo.png"' in rewritten
     assert 'src="js/app.js"' in rewritten
 
@@ -217,7 +217,7 @@ def test_download_wiki_fetches_each_canonical_url_once(
 
     assert fetched == [module.ROOT_URL, page_url]
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
-        "Super-Jump",
+        "Super-Jump.html",
         "index.html",
     ]
 
@@ -522,7 +522,7 @@ def test_english_crawl_skips_spanish_pages_but_keeps_referenced_assets(
     assert spanish_page not in fetched
     assert fetched == [module.ROOT_URL, english_page, spanish_asset]
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
-        "Rules",
+        "Rules.html",
         "es/images/shared.png",
         "index.html",
     ]
@@ -561,7 +561,7 @@ def test_spanish_crawl_skips_english_pages_but_keeps_referenced_assets(
     assert english_page not in fetched
     assert fetched == [root, spanish_page, english_asset]
     assert [path.relative_to(tmp_path).as_posix() for path in result.files] == [
-        "es/Reglas",
+        "es/Reglas.html",
         "es/index.html",
         "images/shared.png",
     ]
@@ -692,7 +692,7 @@ def test_mirror_paths_and_zip_extract_portably(tmp_path: Path) -> None:
     relative = module.local_relative_path(
         "https://infinitythewiki.com/images/CON.png", asset=True,
     )
-    assert relative == "images/_CON.png"
+    assert relative.startswith("images/_CON__u_") and relative.endswith(".png")
 
     staging = tmp_path / "staging"
     item = staging / relative
@@ -701,7 +701,7 @@ def test_mirror_paths_and_zip_extract_portably(tmp_path: Path) -> None:
     item.write_bytes(payload)
     archive = module.archive_wiki([item], tmp_path / "archives", root=staging)
     with zipfile.ZipFile(archive) as source:
-        assert source.namelist() == ["images/_CON.png"]
+        assert source.namelist() == [relative]
         source.extractall(tmp_path / "unpacked")
     assert (tmp_path / "unpacked" / relative).read_bytes() == payload
 

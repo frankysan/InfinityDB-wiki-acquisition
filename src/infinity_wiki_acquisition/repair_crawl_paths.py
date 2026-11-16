@@ -1,8 +1,8 @@
-"""Offline copy-and-repair for a fresh Infinity Wiki crawl's old case-colliding paths.
+"""Offline copy-and-rewrite of older fresh Rules Wiki crawl layout.
 
-Original work stays untouched. Requires retained original HTML source bodies
-(--source-replay-dir), so local links can be reproduced without network access.
-History and archive-derived runs require separate migration contracts.
+Original work stays untouched. Exact retained original HTML response bodies
+(--source-replay-dir) are required for rewriting all saved local links.
+History and parent-derived work retain separate immutable source contracts.
 """
 
 from __future__ import annotations
@@ -25,6 +25,13 @@ def repair_crawl_paths(work: Path, output_work: Path) -> dict[str, int]:
         EVIDENCE_DIRECTORY, read_page_evidence, write_page_evidence,
     )
     from infinity_wiki_acquisition.rendered_response import request_and_rewrite_profile
+    from infinity_wiki_acquisition.fresh_discovery import (
+        read_original_discovery_mode, ensure_fresh_discovery_mode,
+    )
+    from infinity_wiki_acquisition.asset_evidence import (
+        _evidence_path, read_asset_evidence, write_asset_evidence,
+        ASSET_EVIDENCE_FORMAT, ASSET_EVIDENCE_VERSION,
+    )
     from infinity_wiki_acquisition.snapshot_archive import validate_archive_member_paths
     from infinity_wiki_acquisition.source_replay import (
         PRIVATE_DIRECTORY, source_body_path,
@@ -51,6 +58,9 @@ def repair_crawl_paths(work: Path, output_work: Path) -> dict[str, int]:
     if language not in site.languages or header.get("version") != CHECKPOINT_VERSION:
         raise ValueError("Unsupported original checkpoint language or version")
     root_url = cli.canonical_crawl_url(site.root_urls[language], site=site)
+    allpages_mode = read_original_discovery_mode(
+        work, site=site.key, language=language,
+    )
     state = read_crawl_checkpoint(
         work / CHECKPOINT_FILENAME, work=work, site=site.key,
         language=language, root_url=root_url, require_complete=False,
@@ -86,6 +96,10 @@ def repair_crawl_paths(work: Path, output_work: Path) -> dict[str, int]:
         source_data[url] = (raw, evidence)
 
     output_work.mkdir(parents=True, exist_ok=False)
+    ensure_fresh_discovery_mode(
+        output_work, site=site.key, language=language,
+        full_allpages=allpages_mode, resume=False,
+    )
     for directory in (PRIVATE_DIRECTORY, EVIDENCE_DIRECTORY, ".wiki-asset-evidence"):
         original = work / directory
         if original.exists():
@@ -101,6 +115,20 @@ def repair_crawl_paths(work: Path, output_work: Path) -> dict[str, int]:
         target.parent.mkdir(parents=True, exist_ok=True)
         if url not in pages:
             shutil.copyfile(work / old_relative, target)
+            original_evidence_path = _evidence_path(work, url)
+            if original_evidence_path.exists():
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+                source_evidence = read_asset_evidence(
+                    work, url, old_relative, digest,
+                )
+                if source_evidence is None:
+                    raise ValueError(f"Invalid asset evidence: {url}")
+                write_asset_evidence(output_work, {
+                    "format": ASSET_EVIDENCE_FORMAT,
+                    "version": ASSET_EVIDENCE_VERSION,
+                    "path": relative,
+                    **source_evidence,
+                })
         else:
             raw, evidence = source_data[url]
             body = cli.rewrite_html_links(

@@ -1,10 +1,15 @@
 # Human Sphere → Rules Wiki acquisition parity review
 
-Reviewed 2026-11-15 against repository `main` at
-`02173fca4f89e5fa57ec8e4939c05f8672e6733a`. This is a
-**source-policy and implementation audit**, not a live crawl. No source-site
-API configuration, access, alias behavior, or asset inventory was
-independently confirmed against a running deployment.
+Initial comparison reviewed 2026-11-15 at repository
+`02173fca4f89e5fa57ec8e4939c05f8672e6733a`; the report was then
+updated for P3.3 and P3.4 implementations. P3.3 independently probed
+the actual English/Spanish MediaWiki API endpoints and completed a
+read-only English archive/allpages comparison. P3.4 portable-path
+migration and artifact lineage were verified by offline integration
+tests. **No live HTML content crawl or new production snapshot was
+performed as part of these implementation steps.** Namespace policy,
+asset/thumbnail configuration, aliases, and downstream consumer
+compatibility have not been comprehensively verified against production.
 
 ## Shared protections already in place
 
@@ -35,15 +40,15 @@ These protections **do not** need separate Rules Wiki implementations:
 | **Fresh discovery** | `enumerate_pages=True`: paginated MediaWiki `allpages` plus outgoing links | Link-only remains the fresh default, with opt-in `--allpages`; `--update-from` also forces it | **P3.3 implemented:** both en/es API endpoints returned positive IDs. English live comparison found 650 main-namespace pages, including 112 URLs absent from the 599-page verified link-only snapshot. `--allpages` supports checkpointed continuation and requires page IDs; a history-only upgrade still cannot discover pages absent from its parent |
 | **Case-only titles** | Conventional title name retained; other capitalization gets a stable `__u_<hash>` page filename | Now uses the same policy for page title components, preserving `/`, `/es/` and legacy `/wiki/` routing directories | **Shared/fixed previously**. `No_LoF` and `No_Lof` now have separate portable names |
 | **Unicode versus ASCII** | Non-ASCII page and asset names receive stable NFC-based disambiguation instead of colliding with ASCII transliterations | Previously no Unicode disambiguation; **enabled for Rules Wiki page and asset paths in this review** | **Fixed**. E.g. `Ca%C3%B1on` and `Canon` are distinct on Windows/Linux; Unicode normalization is tested |
-| **Page/directory collisions** | `page_path_suffix=".html"` separates page `/Foo` from descendants `/Foo/Bar` | Page paths are extensionless: `Foo` and `Foo/Bar` can require a filesystem file and directory with the same name | **High: open**. Fails rather than safely mirroring both. Needs a reviewed deterministic path scheme and explicit migration of completed work/snapshots; copying the Human Sphere suffix blindly would change every Rules Wiki page path |
-| **Other path normalization** | Case and Unicode safeguards, but punctuation folding can still collide | Case and Unicode safeguards, but punctuation folding and case-only *asset* names can still collide | **Medium: shared open risk**. Both fail closed; review a path-identity escape scheme only when source cases are observed. Do not infer two distinct URLs are the same page |
+| **Page/directory collisions** | `page_path_suffix=".html"` separates page `/Foo` from descendants `/Foo/Bar` | Now uses `.html` for ordinary source pages while retaining generated `index.html` | **P3.4 fixed:** `Foo.html` and `Foo/Bar.html` can coexist. Old Rules Wiki snapshots stay unchanged; new updates use the corrected layout with full source HTML refetch and exact parent lineage |
+| **Other path normalization** | Case and Unicode safeguards; residual punctuation/asset casing may still fail closed | P3.4 adds component-level URL decoding, punctuation/encoded-separator markers, asset casing, generated-index reservation and host-independent Windows-portable names | **P3.4 fixed for Rules Wiki:** source-identity suffixes distinguish previously lossy URL components; Human Sphere continues its existing fail-closed policy. Cross-origin/local-path and unusual source aliases still require explicit evidence, not silent merging |
 | **MediaWiki thumbnail originals** | From a standard same-site `/images/thumb/.../` derivative, also attempts original `/images/.../` upload; records candidate source evidence | The thumbnail-to-original rule is currently enabled only for Human Sphere; Rules Wiki also has a distinct `assets.corvusbelli.net` host | **Conditional**. Enable only for verified same-site standard MediaWiki thumbnails if present; never fabricate originals from external/static asset URLs |
 | **Noncontent namespaces** | Ignores `Talk:` and the configured project namespace | Ignores `Infinity:` project namespace, but **not** `Talk:` | **Medium: site-policy review**. Confirm that excluding Rules Wiki talk pages is appropriate for intended source coverage before changing ignored URL classes |
 | **Service endpoints** | Ignores paths under `/rest.php/` and `/cdn-cgi/` | No analogous ignored-prefix configuration; `index.php` and `Special:` are already skipped by shared logic | **Conditional**. Inspect en/es service routes, especially separate `/wiki-es/` API endpoints, before deciding what must not be mirrored |
 | **Discovered HTTP 404s** | May ignore a 404 for a *non-required linked* page/asset; an allpages-required page remains mandatory | All discovered eligible 404s are failures unless explicitly ignored by another rule | **Source-specific by design** until live evidence shows stale optional links are common; do not copy 404 ignoring to the Rules Wiki unconditionally |
 | **Host canonicalization** | Both `human-sphere.com` and `www.human-sphere.com` normalize to one origin | Only `infinitythewiki.com` is recognized as a page host | **Conditional**. Confirm whether `www.`/other aliases actually serve the same installation before adding them |
 | **Courtesy pacing** | 0.5 s per source request | No configured delay; common HTTP backoff still retries transient failures | **Operational difference**, not a known bug; revisit based on source limits or real 429/503 observations |
-| **Localization / output** | English only, `HUMAN-SPHERE`, page `.html` suffix | Separate en/es wiki/API roots, `WIKI-en`/`WIKI-es`, extensionless pages | **Intentional**. Preserve correct separate source languages, paths, and archive identities |
+| **Localization / output** | English only, `HUMAN-SPHERE`, page `.html` suffix | Separate en/es wiki/API roots, `WIKI-en`/`WIKI-es`, and now portable page `.html` members | **Intentional**. Root and language index paths, source URLs, page IDs and archived historical identities remain independent of local member names |
 
 ### P3.3 observed API coverage and new opt-in full discovery
 
@@ -70,8 +75,9 @@ Spanish archive. See MediaWiki's
 [allpages API](https://www.mediawiki.org/wiki/API:Allpages).
 
 New `--allpages` is explicitly opt-in for **fresh Rules Wiki runs**,
-rather than silently changing existing link-only default behavior
-while P3.4 portable filename work remains. The original crawl
+rather than silently changing existing link-only default behavior.
+P3.4's path-layout migration is implemented independently; changing the
+discovery default remains a separate operator compatibility decision. The original crawl
 checkpoints retain per-batch `apcontinue`, required source URLs and
 numeric page IDs; strict mode requires every allpages title to carry
 a valid positive ID and detects conflicting mappings. A private
@@ -92,13 +98,23 @@ snapshot, verify all artifacts, and only then call a history upgrade
 comprehensive for its observed page scope. Neither method proves
 atomic source time or template/module rendering freshness.
 
-### Portable paths and migration
+### P3.4 portable paths and migration
 
-The case-sensitive Rules Wiki fix and the new Unicode disambiguation
-change the deterministic local name of some pages and assets. A
-previously written HTML page can contain *old rewritten links* even after
-the downloader executable changes. A raw `--resume-work` cannot safely
-reclassify the already checkpointed files.
+Rules Wiki now uses `.html` for its current page members. A page
+`/Foo` becomes `Foo.html` while `/Foo/Bar` becomes `Foo/Bar.html`;
+ordinary generated indexes remain `index.html`/`es/index.html`/
+`wiki/index.html`. Component-level escaping gives ambiguous punctuation,
+percent-encoded separators, case-only asset names and reserved index
+titles deterministic source-identity suffixes, and always uses Windows-
+portable filesystem rules even when running on Linux. Human Sphere's
+existing `.html` layout remains unchanged.
+
+The new mapping changes every non-root Rules Wiki page's local member
+name. Previously saved HTML contains *old rewritten links*: using
+`--resume-work` directly against older work would be unsafe.
+New fresh Rules Wiki work carries a private version-2 discovery/path-
+layout receipt. Old unversioned link crawls and version-1 allpages
+work are refused for direct resume until migrated.
 
 For the previously interrupted **fresh non-history** run with original
 `--source-replay-dir` bodies, use
@@ -110,10 +126,29 @@ parent-derived work need a separate migration contract, not this command.
 A completed earlier snapshot is immutable; a history-only upgrade retains
 its old current-page paths, rather than retroactively renaming them.
 
-The extra `.html` suffix that protects Human Sphere from `Foo` versus
-`Foo/Bar` conflicts cannot be copied into an active Rules Wiki run without
-a source-path/rewrite and checkpoint migration. The portable ZIP verifier
-remains fail closed in the interim.
+The offline repair creates a **separate** new work directory, validates
+old checkpoint-committed original response evidence, rewrites every saved
+page/link to the current layout, updates page and HTTP asset evidence,
+and writes the new mode/layout receipt. Allpages selection is preserved.
+If original HTML bodies are unavailable, restart a fresh acquisition
+instead of guessing prior links.
+
+A **completed original snapshot is immutable**. For the verified
+`WIKI-en 20261115-223808` link-only archive, start a new
+`--update-from` against its exact ZIP/v3 manifest/inventory to refetch
+current pages, enumerate allpages, and publish a corrected child with exact
+parent SHA-256 lineage. Same URL/page ID with a changed local member path
+is reported as `mirror-path-layout-change`, not a wiki move.
+The old ZIP/manifest/inventory and any history associated with that
+parent remain intact. A history-only upgrade of an old parent retains the
+old member names because it doesn't fetch or rewrite current HTML.
+
+**Interrupted older archive-derived updates** are bound to their original
+path layout. Their old receipt lacks the new boolean layout marker,
+so recovery fails closed: restart `--update-from` from the same
+verified immutable parent. The fresh-only repair command must not
+rewrite archive-derived or history staging. Normal new update resumes
+continue through the parent-bound checkpoint contract.
 
 ## Next steps
 
@@ -122,17 +157,18 @@ remains fail closed in the interim.
    full-discovery mode are complete. For actual acceptance, run a full
    source update/new `--allpages` snapshot and independently verify its
    artifacts; a full Spanish archive comparison remains unperformed.
-2. **High:** Design Rules Wiki page-versus-directory-safe filenames for
-   subpage titles without breaking index/language routes or portable ZIP
-   hashes. Explicitly test on Windows/Linux, root paths, link rewriting,
-   archived history and interrupted raw replay.
+2. **P3.4 implemented:** Added deterministic portable filenames, versioned
+   work-mode/layout receipts, offline fresh-work migration, and immutable
+   parent-to-child update tests for English/Spanish routing, old/current
+   history, source HTML replay and ZIP verification.
 3. **Medium:** Study actual Rules Wiki namespace/service endpoints, optional
    404 responses, MediaWiki thumbnail/imageinfo and host aliases from
    **source evidence** before extending any Human Sphere source-specific
    exception. Retain fail-closed source coverage by default.
-4. **Lower:** Review path collisions from punctuation folding and asset
-   capitalization on **both** sites. Observe real collision cases before
-   changing output names globally.
+4. **Lower:** Rules Wiki punctuation folding and case-only asset paths now
+   disambiguate. Retain Human Sphere's current fail-closed safeguards until
+   real residual cases justify changes; inspect cross-origin asset-path
+   conflicts and true source aliases before extending their policies.
 5. **Acceptance:** Run focused offline parity tests, then verify actual
    fresh ZIP/v3 manifest/v1 inventory/source replay, followed by
    a separate history upgrade after intended current-page coverage is

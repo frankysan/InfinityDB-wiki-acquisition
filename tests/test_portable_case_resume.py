@@ -77,7 +77,7 @@ def _preserved(work: Path, *, corrupt_raw: bool = False) -> None:
 def test_infinity_wiki_case_variants_have_distinct_portable_paths():
     canonical = cli.local_relative_path(SECOND, site=SITE)
     alternate = cli.local_relative_path(FIRST, site=SITE)
-    assert canonical == "No_Lof"
+    assert canonical == "No_Lof.html"
     assert alternate.startswith("No_LoF__u_")
     assert len({canonical.casefold(), alternate.casefold()}) == 2
     assert cli.local_relative_path(ROOT, site=SITE) == "index.html"
@@ -99,7 +99,7 @@ def test_rules_wiki_unicode_page_titles_remain_portably_distinct():
     ascii_title = cli.local_relative_path(base + "Canon", site=SITE)
     decomposed = cli.local_relative_path(base + "Can%CC%83on", site=SITE)
     assert accented.startswith("Canon__u_")
-    assert ascii_title == "Canon"
+    assert ascii_title == "Canon.html"
     assert accented != ascii_title
     assert decomposed == accented
     assert cli.local_relative_path(base + "Ca%C3%B1on", site=SITE, os_name="Linux") == accented
@@ -119,7 +119,7 @@ def test_rules_wiki_unicode_page_titles_remain_portably_distinct():
         SITE.root_urls["es"], site=SITE, language="es",
     )
     assert f'href="{accented}"' in html
-    assert 'href="Canon"' in html
+    assert 'href="Canon.html"' in html
 
 
 def test_rules_wiki_unicode_asset_names_are_not_transliterated_into_collisions():
@@ -130,7 +130,7 @@ def test_rules_wiki_unicode_asset_names_are_not_transliterated_into_collisions()
     plain = cli.local_relative_path(base + "Canon.png", site=SITE, asset=True)
     assert title.startswith("images/Canon__u_")
     assert title.endswith(".png")
-    assert plain == "images/Canon.png"
+    assert plain.startswith("images/Canon__u_") and plain.endswith(".png")
     assert title.casefold() != plain.casefold()
     assert title == cli.local_relative_path(base + "Ca%C3%B1on.png", site=SITE, asset=True, os_name="Linux")
     validate_archive_member_paths([title, plain])
@@ -240,6 +240,70 @@ def test_repaired_crawl_publishes_verified_snapshot_and_source_replay(
     ]) == 3
     assert (original / "No_LoF").is_file()
     assert not migrated.exists()
+
+
+def test_repair_migrates_saved_asset_metadata_and_old_allpages_scope(
+    tmp_path,
+):
+    import hashlib
+    import json
+    from infinity_wiki_acquisition.asset_evidence import (
+        build_asset_evidence, read_asset_evidence, write_asset_evidence,
+    )
+    from infinity_wiki_acquisition.fresh_discovery import (
+        NAME as DISCOVERY_RECEIPT, RULES_PATH_LAYOUT,
+        ensure_fresh_discovery_mode,
+    )
+
+    old = tmp_path / "legacy.work"
+    migrated = tmp_path / "migrated.work"
+    _preserved(old)
+    asset_url = ROOT + "images/Icon.png"
+    old_path = "images/Icon.png"
+    bytes_read = cli.WikiFetchedBytes(
+        b"\x89PNG\r\n\x1a\nold asset bytes",
+        effective_url=asset_url, http_status=200, etag='"v1-strong"',
+    )
+    asset_target = old / old_path
+    asset_target.parent.mkdir()
+    asset_target.write_bytes(bytes_read)
+    evidence = build_asset_evidence(asset_url, old_path, bytes_read)
+    assert evidence is not None
+    write_asset_evidence(old, evidence)
+
+    checkpoint_file = old / CHECKPOINT_FILENAME
+    checkpoint = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+    checkpoint["discovered"][asset_url] = True
+    checkpoint["saved"][asset_url] = [old_path, len(bytes_read)]
+    write_crawl_checkpoint(checkpoint_file, checkpoint)
+    (old / DISCOVERY_RECEIPT).write_text(json.dumps({
+        "format": "InfinityDB wiki fresh discovery",
+        "version": 1, "site": SITE.key, "language": "en",
+        "discovery": "allpages",
+    }), encoding="utf-8")
+
+    report = repair_crawl_paths(old, migrated)
+    new_path = cli.local_relative_path(asset_url, site=SITE, asset=True)
+    assert new_path != old_path
+    assert report["savedFiles"] == 3
+    assert (old / old_path).read_bytes() == bytes_read
+    assert (migrated / new_path).read_bytes() == bytes_read
+    assert read_asset_evidence(
+        migrated, asset_url, new_path,
+        hashlib.sha256(bytes_read).hexdigest(),
+    ) is not None
+    receipt = json.loads((migrated / DISCOVERY_RECEIPT).read_text())
+    assert receipt["discovery"] == "allpages"
+    assert receipt["pathLayout"] == RULES_PATH_LAYOUT
+    ensure_fresh_discovery_mode(
+        migrated, site=SITE.key, language="en",
+        full_allpages=True, resume=True,
+    )
+    with pytest.raises(ValueError, match="Discovery scope differs"):
+        ensure_fresh_discovery_mode(
+            migrated, site=SITE.key, language="en",
+            full_allpages=False, resume=True,
+        )
 
 
 def test_repair_rejects_altered_source_body_and_never_touches_original(

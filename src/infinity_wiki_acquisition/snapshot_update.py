@@ -262,9 +262,13 @@ def _page_changes(
                 "oldPath": member["path"],
                 "newPath": current["path"],
                 "interpretation": (
-                    "move-corroborated-by-recentchanges"
-                    if corroborated and len(fresh_members) == 1
-                    else "unresolved-url-association"
+                    "mirror-path-layout-change"
+                    if same_url is not None and parent["site"] == "infinity-wiki"
+                    else (
+                        "move-corroborated-by-recentchanges"
+                        if corroborated and len(fresh_members) == 1
+                        else "unresolved-url-association"
+                    )
                 ),
             })
     return moved, disappeared
@@ -352,6 +356,9 @@ def update_snapshot(
             "requireHistory": require_history,
             "allowHistoricalOnly": allow_historical_only,
             "sourceReplay": source_replay_directory is not None,
+            **({
+                "rulesHtmlPathLayoutV1": True,
+            } if site.key == cli.INFINITY_WIKI_SITE.key else {}),
         },
         resume=resume_work is not None, started_at=started_at,
     )
@@ -389,6 +396,14 @@ def update_snapshot(
                 site.root_urls[language], site=site,
             ), require_complete=False,
         )
+        for url, (relative, _size) in saved_state["saved"].items():
+            if relative != cli.local_relative_path(
+                url, site=site, asset=saved_state["discovered"][url],
+            ):
+                raise ValueError(
+                    "Resumed update uses an obsolete page-path layout; "
+                    "start a new update from the verified parent"
+                )
         validate_saved_current_pages(
             work, saved_state,
             require_source_replay=source_replay_directory is not None,

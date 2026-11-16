@@ -63,8 +63,9 @@ Agents start with [AGENTS.md](../AGENTS.md).
   root and /es/ and /wiki/ routing prefixes. Thus a title such as
   `No_LoF` receives a stable `__u_<sha256-prefix>` path distinct
   from conventional `No_Lof` on Windows and Linux. The full URL,
-  page evidence, original HTML, and source identity remain unchanged;
-  binary assets retain their existing path policy.
+  page evidence, original HTML, and source identity remain unchanged.
+  P3.4 additionally disambiguates case-only assets, punctuation folding,
+  URL-encoded separators and portable generated index collisions.
   An interrupted **fresh non-history** crawl created before this
   mapping change must not directly resume stale rewritten paths.
   The offline `python -m infinity_wiki_acquisition.repair_crawl_paths
@@ -72,9 +73,11 @@ Agents start with [AGENTS.md](../AGENTS.md).
   committed files into a separate work directory. It requires the
   original `--source-replay-dir` HTML bodies, recomputes every
   saved page's offline link rewriting, updates matching source
-  provenance and checkpoint paths, and validates portable output
-  paths without editing the original. It preserves the interrupted
-  pending/failure queue; up to one uncommitted checkpoint batch may
+  provenance, asset HTTP evidence, and checkpoint paths, and validates
+  portable output paths without editing the original. It also preserves
+  the previously chosen link-only/allpages discovery mode and writes
+  the current path-layout receipt. The interrupted pending/failure
+  queue is retained; up to one uncommitted checkpoint batch may
   repeat. It deliberately rejects history/parent-derived runs and
   refuses to guess missing original HTML. See the README's
   case-collision recovery example.
@@ -98,10 +101,40 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P3.4 uses the Rules Wiki's deterministic, Windows-portable `.html`
+  current-page members (`Foo.html` versus `Foo/Bar.html`) and preserves
+  generated `index.html`/`es/index.html`/`wiki/index.html` files.
+  Percent-encoded URL separators are split **after**, not before,
+  source path segmentation. Sanitization loss, case-only assets,
+  nonstandard source capitalization, Unicode and generated-index title
+  conflicts receive component-based SHA-256 identity markers. The
+  original source request URL, page ID and source representation hashes
+  remain independently recorded. Human Sphere's current path policy is
+  unchanged; any residual cross-origin or unusual source collision
+  continues to fail closed.
+  Every fresh Rules Wiki run writes a private
+  `.wiki-fresh-discovery.json` version-2 receipt binding site,
+  language, allpages/link-only mode and
+  `rules-html-escaped-v1` path layout. Old link-only work without a
+  receipt and P3.3 version-1 allpages work **cannot** directly resume:
+  copy/rewrite committed fresh work using the original-source replay
+  migration and then resume the migrated work with the original
+  `--allpages` choice. Old archive-derived current-update work is
+  rejected by its parent-bound receipt's missing path-layout option;
+  start a new `--update-from` against the same verified parent instead.
+  New update children refetch all current pages and use current paths,
+  count inherited bytes only with exact-path evidence, and label
+  same-URL path-only changes `mirror-path-layout-change`. A
+  history-only upgrade keeps the old parent's exact path/bytes; this
+  is intentional, not a migration. The v3 ZIP provenance and v1/v2
+  inventory **formats** are unchanged, but downstream consumers
+  cannot assume extensionless Rules Wiki members. Exact downstream
+  acceptance and real-source tests remain P3.6.
 - P3.3 full Rules Wiki discovery is selectable on **new fresh** runs via
-  `--allpages`; a link-only fresh Rules Wiki crawl remains the default
-  pending P3.4 filename-path review. Human Sphere already uses paginated
-  `allpages` by default, and all `--update-from` runs force it. The
+  `--allpages`; link-only remains the default for operator compatibility,
+  independently of P3.4's completed portable filename migration.
+  Human Sphere already uses paginated `allpages` by default, and
+  all `--update-from` runs force it. The
   Rules Wiki English/Spanish main-namespace APIs were probed on
   2026-11-15; both supplied positive page IDs and continuation. The
   independently verified `WIKI-en 20261115-223808` link-only snapshot
@@ -116,9 +149,10 @@ Agents start with [AGENTS.md](../AGENTS.md).
   `apcontinue` before fetching pages. The new private
   `.wiki-fresh-discovery.json` receipt binds site, language and
   discovery mode so an interrupted full-scope run cannot silently
-  resume as link-only or vice versa. Existing link-only checkpoints
-  without a receipt retain their normal semantics; promotion to
-  allpages requires a **new run**. Parent-derived modes do not accept
+  resume as link-only or vice versa. Under P3.4, the version-2 receipt
+  also binds the new portable filename layout: older work must use
+  explicit offline original-HTML migration rather than directly resume.
+  Changing a link-only run to allpages still requires a **new run**. Parent-derived modes do not accept
   `--allpages` because current updates already use forced allpages
   and history-only upgrades do not fetch current pages. The optional
   `tools.audit_rules_allpages --live` compares exact URLs and

@@ -139,6 +139,9 @@ def sanitize_relative_path(
     os_name: str | None = None,
     disambiguate_unicode: bool = False,
     disambiguate_page_case: bool = False,
+    disambiguate_lossy: bool = False,
+    disambiguate_asset_case: bool = False,
+    reserve_generated_index: bool = False,
 ) -> str:
     """Normalize a relative path without collapsing distinct page identities.
 
@@ -146,21 +149,26 @@ def sanitize_relative_path(
     capitalization or both receive stable source-identity suffixes.
     Conventional spellings and ordinary asset paths can keep readable names.
     """
-    normalized = unquote(path).replace("\\", "/")
-    if normalized.startswith("/"):
-        normalized = normalized[1:]
+    # Split *before* decoding. A URL-encoded slash (%2F) names a distinct
+    # source component from a literal / directory separator.
+    normalized = path.lstrip("/")
     if not normalized:
         return "index.html"
     parts: list[str] = []
-    for part in normalized.split("/"):
-        if not part:
+    for encoded in normalized.split("/"):
+        if not encoded:
             continue
+        part = unquote(encoded)
         safe = sanitize_path_component(part, os_name=os_name)
         if (
             (disambiguate_unicode and not unicodedata.normalize("NFC", part).isascii())
             or (disambiguate_page_case and _nonstandard_page_case(part))
+            or (disambiguate_lossy and safe != part)
+            or (disambiguate_asset_case and part != part.lower())
+            or (reserve_generated_index and part.casefold() == "index.html")
         ):
-            # Transliterated or differently capitalized titles need distinct paths.
+            # Non-portable punctuation, encoded separators, transliteration
+            # and case variants need a stable source-component identity.
             source = unicodedata.normalize("NFC", part)
             marker = "__u_" + hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
             suffix = Path(safe).suffix

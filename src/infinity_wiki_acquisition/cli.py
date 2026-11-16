@@ -129,6 +129,9 @@ INFINITY_WIKI_SITE = WikiSite(
     archive_prefix="WIKI",
     archive_language=True,
     project_namespaces=frozenset({"infinity"}),
+    # Page files must not occupy a directory needed by Foo/Bar subpages.
+    # Generated / and /es/ indexes retain their established index.html path.
+    page_path_suffix=".html",
 )
 
 HUMAN_SPHERE_SITE = WikiSite(
@@ -1194,9 +1197,9 @@ def local_relative_path(
     if path == "/":
         normalized = "index.html"
     else:
-        normalized = urllib.parse.unquote(path)
-        if normalized.startswith("/"):
-            normalized = normalized[1:]
+        # Preserve percent-encoded separators until each source path
+        # component has been split and independently sanitized.
+        normalized = path.lstrip("/")
         if not normalized or normalized.endswith("/"):
             normalized = f"{normalized}index.html" if normalized else "index.html"
         elif not asset and site.page_path_suffix:
@@ -1214,9 +1217,12 @@ def local_relative_path(
         else:
             normalized = f"{normalized}__q_{query_hash}"
 
-    path_os_name = os_name
-    if path_os_name is None:
-        path_os_name = "Windows"
+    # Rules Wiki archives are portable across Windows/Linux/macOS: use the
+    # Windows-safe component mapping even when explicitly tested on Linux.
+    path_os_name = (
+        "Windows" if site.key == INFINITY_WIKI_SITE.key
+        else (os_name or "Windows")
+    )
     # The Infinity Wiki language/root and legacy /wiki/ routing segments
     # are not page-title spellings. Keep their existing directory identity
     # and generated index.html unchanged; disambiguate the actual title.
@@ -1230,6 +1236,8 @@ def local_relative_path(
             normalized, os_name=path_os_name,
             disambiguate_unicode=True,
             disambiguate_page_case=not generated_index,
+            disambiguate_lossy=True,
+            reserve_generated_index=not generated_index,
         )
         return directory + leaf
     return sanitize_relative_path(
@@ -1239,6 +1247,8 @@ def local_relative_path(
         # Avoid transliteration collisions on case-insensitive filesystems.
         disambiguate_unicode=True,
         disambiguate_page_case=site.key == HUMAN_SPHERE_SITE.key and not asset,
+        disambiguate_lossy=site.key == INFINITY_WIKI_SITE.key,
+        disambiguate_asset_case=site.key == INFINITY_WIKI_SITE.key and asset,
     )
 
 
@@ -1475,7 +1485,9 @@ def _migrate_blocking_legacy_page_paths(
     site: WikiSite,
 ) -> None:
     """Move legacy extensionless page files that block a new descendant path."""
-    if not site.page_path_suffix:
+    if not site.page_path_suffix or site.key == INFINITY_WIKI_SITE.key:
+        # The Rules Wiki's page-layout migration is explicit, never a
+        # same-directory rewrite of old checkpointed work.
         return
 
     parents: list[Path] = []
@@ -1900,7 +1912,7 @@ def download_wiki(
         if asset:
             continue
 
-        if site.page_path_suffix:
+        if site.page_path_suffix and site.key == HUMAN_SPHERE_SITE.key:
             legacy_site = site._replace(page_path_suffix="")
             legacy_relative = local_relative_path(url, site=legacy_site)
             legacy_target = destination / legacy_relative

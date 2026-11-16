@@ -47,11 +47,18 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Fixed
 
+- **Acquisition:** Completed P3.4 portable Rules Wiki layout migration:
+  current page filenames now end in `.html` while root and language indexes
+  keep their established paths. A page `Foo` and subpage `Foo/Bar` no
+  longer conflict on Windows/Linux. Encoded separators are distinct from
+  real directories; punctuation and case-only asset filenames receive
+  deterministic source-identity suffixes instead of colliding.
 - **Acquisition:** Rules Wiki now also disambiguates internationalized page
   and binary-asset filenames with NFC-based source-identity suffixes,
   matching Human Sphere's existing protection against Unicode-to-ASCII
-  transliteration collisions. Spanish/English root paths and normal title
-  spellings remain unchanged; old checkpointed work must use the
+  transliteration collisions. Spanish/English root paths were preserved; before the P3.4
+  `.html` layout cutover, ordinary title spellings were unchanged.
+  Old checkpointed work must use the
   original-HTML replay repair before resuming under a changed path mapping.
 - **Acquisition:** Infinity Wiki now distinguishes differently capitalized
   source page titles using stable portable filename suffixes, just as
@@ -60,6 +67,15 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added a Rules Wiki path-layout receipt to ordinary
+  fresh crawl checkpoints, preventing old extensionless work from silently
+  resuming with changed rewritten links. The offline original-HTML
+  checkpoint migration now retains allpages selection and updates stored
+  asset HTTP evidence. Verified parent archives remain immutable:
+  `--update-from` refreshes into the new layout and reports path-only
+  changes separately from source moves; history-only upgrades preserve
+  their parent's previously archived paths. Old interrupted update work
+  must restart from its unchanged parent.
 - **Acquisition:** Added an opt-in `--allpages` mode for fresh
   English/Spanish Rules Wiki acquisitions, retaining checkpointed
   continuation, numeric page IDs, an explicit resume-mode receipt and

@@ -107,9 +107,12 @@ IDs; Human Sphere already uses allpages by default:
 infinity-wiki-snapshot --site infinity-wiki --language en --allpages
 ```
 
-Until the remaining Rules Wiki filename/subpage migration is reviewed, the
-fresh Rules Wiki default remains its existing link-based crawl. The
-`--allpages` option is only for **new, fresh** Rules Wiki acquisitions.
+Rules Wiki now uses portable `.html` page filenames (for example,
+`Foo.html` and `Foo/Bar.html`), eliminating file-versus-directory
+collisions. Root indexes remain `index.html` and `es/index.html`.
+The fresh Rules Wiki default remains link-based for operator compatibility;
+use `--allpages` for main-namespace coverage. The `--allpages`
+option is only for **new, fresh** Rules Wiki acquisitions.
 It checkpoints MediaWiki's `apcontinue` token and requires positive page
 IDs. Resume with `--allpages` as well; a previous link-only work directory
 cannot be promoted into full discovery. An `--update-from` run already
@@ -256,6 +259,46 @@ identities for an unsafe upgrade.
 
 ## 5. Working with completed snapshots
 
+### Portable page layout and an older snapshot parent
+
+**Current Rules Wiki page members** use `.html` suffixes: a page
+`/Foo` is `Foo.html` while a subpage `/Foo/Bar` is
+`Foo/Bar.html`. The generated roots remain `index.html`,
+`es/index.html` and `wiki/index.html`. Upper/lowercase variants,
+Unicode, encoded slashes, Windows-reserved names and punctuation that
+would otherwise collapse to the same filesystem component receive
+stable source-identity suffixes. Binary assets retain their ordinary
+extensions, with additional suffixes where needed for unique identities.
+
+**Do not modify an older completed ZIP to rename its members.** For example,
+the independently verified `WIKI-en 20261115-223808` source archive
+uses the older extensionless layout. To create a fully enumerated
+current-content child with corrected filenames, run:
+
+```powershell
+infinity-wiki-snapshot `
+  --update-from "local/data/wiki/WIKI-en 20261115-223808.zip" `
+  --from-manifest "local/data/manifests/snapshots/WIKI-en 20261115-223808.json" `
+  --from-inventory "local/data/manifests/snapshots/inventories/WIKI-en 20261115-223808.inventory.json" `
+  --source-replay-dir "local/data/wiki-source-replay"
+```
+
+This **new acquisition** uses `allpages`, downloads current HTML again,
+checks assets and writes a new complete ZIP/v3 manifest/inventory and replay
+companion, preserving the original parent artifacts and their SHA-256
+lineage. Renaming a mirror path with an unchanged page URL is recorded
+as `mirror-path-layout-change`, not an asserted change in wiki identity.
+Interrupted **older** `--update-from` work cannot be resumed after this
+layout cutover; restart from the same verified parent. New updates can
+resume normally. The existing consumer must be checked for assumptions
+about extensionless file members before ingesting newly generated archives.
+
+A history-only upgrade of an **older** completed parent does *not*
+migrate member paths—it preserves all current HTML bytes and old member
+names. For a comprehensive history archive, first acquire/refresh the
+parent's current page set with allpages and verify the resulting child,
+then upgrade that child to history.
+
 ### History upgrades versus current updates
 
 A history upgrade uses the verified parent as a source of unchanged current
@@ -331,15 +374,16 @@ infinity-wiki-snapshot `
   --retry-failed-only
 ```
 
-### Repair an older Infinity Wiki case-collision checkpoint
+### Repair older Rules Wiki work after filename changes
 
-If an earlier English or Spanish Infinity Wiki run failed because source
-titles differed only by capitalization (for example, `No_LoF` and
-`No_Lof`), or because a Unicode title and its ASCII transliteration
-mapped to the same portable filename, **do not retry its old work
-directory directly after upgrading the downloader**. The page-path
-mapping has changed. Existing pages also contain links written using
-the previous mapping.
+An interrupted fresh Rules Wiki crawl started before the current
+`.html` filename layout is **not safe to resume directly**, even if its
+only observed issue was a case-only title such as `No_LoF` versus
+`No_Lof`. Unicode transliteration, punctuation, asset names and
+rewritten links can also have changed. The new private
+`.wiki-fresh-discovery.json` receipt binds the precise layout and
+link-only/allpages choice. An old work directory lacking that receipt or
+recording the former layout is refused rather than silently migrated.
 
 For a fresh, non-history crawl started with `--source-replay-dir`, use the
 offline repair tool to **create a new work directory** from its committed
@@ -363,10 +407,13 @@ infinity-wiki-snapshot `
 
 The repair does **not** access the network or modify the old work directory.
 It verifies committed saved HTML against its retained source evidence,
-reconstructs every saved page's local links, and maps case-variant titles to
-distinct portable filenames. Only checkpoint-committed files are migrated;
-in-flight downloads may repeat during resume. The old directory is preserved
-for inspection until you explicitly decide it is no longer needed.
+reconstructs every saved page's local links in the new `.html` layout,
+updates HTTP asset evidence for renamed assets and preserves the original
+allpages/link-only selection. **If the old run selected `--allpages`, repeat
+that option when resuming the repaired directory.** Only checkpoint-
+committed files are migrated; in-flight downloads may repeat during
+resume. The old directory remains intact until you explicitly decide
+it is no longer needed.
 An ordinary crawl without original-HTML replay evidence cannot use this
 repair safely; start a new crawl instead of guessing how to repair links.
 The tool deliberately refuses history and archive-derived work, which have
@@ -384,6 +431,12 @@ infinity-wiki-snapshot `
 ```
 
 ### Interrupted current-content update
+
+Only updates started with the **current** filename layout may use their
+original `--resume-work` checkpoint. Older update work is bound to its
+former layout and will be rejected; start a new `--update-from` from
+the same verified immutable parent instead. This is different from
+history-only resume, which preserves its parent's existing paths.
 
 ```powershell
 infinity-wiki-snapshot `
