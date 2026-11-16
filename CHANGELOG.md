@@ -75,6 +75,15 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added a read-only offline operator acceptance command,
+  `python -m tools.verify_snapshot_acceptance`, to independently verify
+  ZIP/v3 manifest/inventory, original HTML replay and exact immutable-parent
+  lineage, comparing source URLs separately from renamed archive members.
+  The real 2026-11-16 Rules Wiki update passed with 932 members,
+  711 replay-verified HTML pages, 221 assets, zero unknown members and
+  no missing parent page URLs. The live API audit matched all 650
+  main-namespace page URLs and page IDs. History and downstream consumer
+  acceptance remain separate.
 - **Acquisition:** Added a Rules Wiki path-layout receipt to ordinary
   fresh crawl checkpoints, preventing old extensionless work from silently
   resuming with changed rewritten links. The offline original-HTML

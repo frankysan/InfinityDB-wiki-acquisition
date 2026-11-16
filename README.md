@@ -573,6 +573,35 @@ blocked pending verified site-specific render/source-time guarantees. See
 
 ## 9. Additional commands and audit tools
 
+### Offline snapshot acceptance and parent-lineage audit
+
+Run `tools.verify_snapshot_acceptance` to independently verify the
+snapshot ZIP, its matching provenance/inventory, and, when supplied, the
+original-HTML replay companion and exact parent artifact hashes.
+It compares **source URLs rather than filenames**, so expected path-layout
+migrations do not appear as deleted wiki pages.
+
+```powershell
+python -m tools.verify_snapshot_acceptance `
+  "local/data/wiki/WIKI-en 20261116-075926.zip" `
+  "local/data/manifests/snapshots/WIKI-en 20261116-075926.json" `
+  "local/data/manifests/snapshots/inventories/WIKI-en 20261116-075926.inventory.json" `
+  --replay "local/data/wiki-source-replay/WIKI-en 20261116-075926.source-replay.zip" `
+  --parent "local/data/wiki/WIKI-en 20261115-223808.zip" `
+           "local/data/manifests/snapshots/WIKI-en 20261115-223808.json" `
+           "local/data/manifests/snapshots/inventories/WIKI-en 20261115-223808.inventory.json"
+```
+
+This command is read-only and offline. Its JSON result includes member
+classification, page IDs, source-URL additions/absences, relocated page
+paths, any unresolved member classifications, and the replay/lineage
+verification statuses. Do not interpret it as remote source freshness.
+The English Rules Wiki update dated **2026-11-16** independently passed
+these checks: 932 members, 711 current HTML pages (all replayed), 221
+assets, zero unknown members and zero parent page URLs lost. A separate
+read-only API comparison found all **650** main-namespace source URLs
+present, with zero page-ID mismatches.
+
 ### Rules Wiki allpages coverage audit
 
 Use the read-only API comparator to check an **existing, verified**
