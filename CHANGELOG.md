@@ -5,50 +5,28 @@ acquisition are documented here. Each version begins with a concise **Player
 summary**, followed by fuller acquisition and operator detail.
 
 This repository was split from InfinityDB on **2026-11-11**. Version **0.1**
-(`0.1.0` in the Python package metadata) covers the standalone repository from
-that split onward. Sections explicitly marked **before split** describe inherited
-work in InfinityDB and retain its original version numbers and release dates;
-they are not releases of this repository. Historical entries were reconstructed
-from the downloader and shared archive/provenance Git history and the
+is the first completed standalone baseline, at commit
+[`9e63f89a7cbb`](https://github.com/frankysan/InfinityDB-wiki-acquisition/commit/9e63f89a7cbba92c770e33696621fa88c58179a4)
+on that date. Version **0.2** tracks subsequent standalone development.
+The Python package metadata remains at `0.1.0` until its release version
+is updated separately. Sections explicitly marked **before split** describe
+inherited work in InfinityDB and retain its original version numbers and
+release dates; they are not releases of this repository. Historical entries
+were reconstructed from the downloader and shared archive/provenance Git
+history and the
 [InfinityDB changelog](https://github.com/frankysan/InfinityDB/blob/main/docs/CHANGELOG.md).
 
-## [0.1] - Unreleased
+## [0.2] - Unreleased
 
 ### Player summary
 
 - No player-facing changes.
-
-### Added
-
-- **Acquisition:** Added `--source-replay` as a shorthand for enabling
-  original-HTML replay companions in `local/data/wiki-source-replay`.
-  The existing `--source-replay-dir PATH` remains available for custom
-  destinations. Both options share the same implementation, are mutually
-  exclusive and remain unavailable for history-only upgrades.
-- **Acquisition:** Added the independently installable
-  `infinity-wiki-acquisition` package and `infinity-wiki-snapshot` command for
-  English and Spanish Infinity Wiki snapshots and English-only Human Sphere
-  snapshots. The standalone package retains optional revision-history acquisition,
-  resumable work and incomplete-crawl publication safeguards from InfinityDB.
 
 ### Changed
 
 - **Acquisition:** New snapshots now default to `local/data/wiki/`,
   provenance to `local/data/manifests/snapshots/`, and crawl scratch to
   `local/work/wiki/`. Explicit legacy destinations remain supported.
-- **Acquisition:** Separated source acquisition from the InfinityDB application.
-  The package requires Python 3.11 or newer, uses only the standard library at
-  runtime and has no `infinity_db` import dependency. Acquisition remains an
-  explicit operator action; ordinary InfinityDB builds, serving and Docker
-  deployment do not install or run this package.
-- **Acquisition:** Preserved the existing archive identities and v3
-  `InfinityDB snapshot provenance` contract during extraction. The repository
-  contains acquisition code, not downloaded source documents, game data or
-  graphical assets; third-party materials remain outside its source license.
-- **Acquisition:** Retained the portable ZIP/JSON handoff defined in InfinityDB
-  before extraction. The consumer verifies the exact archive SHA-256 and logical
-  `snapshot.contentSha256` offline; the producer-relative path in the manifest is
-  informational.
 
 ### Fixed
 
@@ -93,6 +71,11 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Added
 
+- **Acquisition:** Added `--source-replay` as a shorthand for enabling
+  original-HTML replay companions in `local/data/wiki-source-replay`.
+  The existing `--source-replay-dir PATH` remains available for custom
+  destinations. Both options share the same implementation, are mutually
+  exclusive and remain unavailable for history-only upgrades.
 - **Acquisition:** Added a read-only Rules Wiki source-policy audit
   command and evidence review for the independently verified English
   `WIKI-en 20261116-075926` snapshot. Its 221 assets comprise 209
@@ -425,6 +408,40 @@ from the downloader and shared archive/provenance Git history and the
 - **Acquisition:** Protected a competing crawl's identical manifest from
   acquisition rollback by requiring newly created provenance. Direct manifest
   writes remain idempotent, with byte-exact comparison including line endings.
+
+## [0.1] - 2026-11-11
+
+First completed standalone baseline at commit
+[`9e63f89a7cbb`](https://github.com/frankysan/InfinityDB-wiki-acquisition/commit/9e63f89a7cbba92c770e33696621fa88c58179a4),
+following the initial extraction commit on the same day. Changes committed
+after this baseline belong to **0.2**.
+
+### Player summary
+
+- No player-facing changes.
+
+### Added
+
+- **Acquisition:** Introduced the independently installable
+  `infinity-wiki-acquisition` package and the
+  `infinity-wiki-snapshot` command for English/Spanish Infinity Wiki
+  and English-only Human Sphere snapshots. The extracted tool retained
+  optional history acquisition, basic interrupted-crawl support and
+  completeness checks from InfinityDB.
+
+### Changed
+
+- **Acquisition:** Separated source acquisition from the InfinityDB
+  application. The Python 3.11+ package uses only the standard
+  library at runtime and has no `infinity_db` dependency. Normal
+  InfinityDB application builds and deployments do not run crawls.
+- **Acquisition:** Preserved the existing snapshot identities and v3
+  `InfinityDB snapshot provenance` contract during extraction.
+  Archived third-party source material remains separate from the
+  repository's MIT-licensed code.
+- **Acquisition:** Retained the portable ZIP/JSON handoff defined in
+  InfinityDB before the split, including exact ZIP SHA-256 and logical
+  content SHA-256 verification. Producer checkout paths are informational.
 
 ### Upgrade notes
 
