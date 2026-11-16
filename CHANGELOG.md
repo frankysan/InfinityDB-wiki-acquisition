@@ -47,6 +47,16 @@ from the downloader and shared archive/provenance Git history and the
 
 ### Fixed
 
+- **Acquisition:** Fixed the first real Rules Wiki history-upgrade
+  blocker at an inherited `api.php.html` service pseudo-page. When
+  the MediaWiki revision API positively reports the exact, source-
+  verified `/api.php` endpoint as missing, the history index can
+  preserve that current artifact with an explicit zero-revisions
+  `historyExclusion` record (reason, query URL, response SHA-256).
+  The exception does not cover normal missing wiki titles or network
+  failures. The existing 709-page/2,801-oldid checkpoint remains
+  resumable without rewriting its parent or source evidence. New
+  crawls ignore the API service URL as non-content.
 - **Acquisition:** Fixed a verified Rules Wiki `--update-from` blocker:
   the legacy `opensearch_desc__u_b7ab2ebdc1fb.php` entry was
   classified as unknown because MediaWiki's linked OpenSearch XML

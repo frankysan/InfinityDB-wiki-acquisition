@@ -779,6 +779,10 @@ def verify_snapshot(
                     document["formatVersion"] == index_version,
                     "History index/inventory versions must match",
                 )
+                from infinity_wiki_acquisition.history_service_exclusion import (
+                    validate_history_exclusion,
+                )
+
                 for page in history_index["pages"]:
                     current_path = page.get("currentPath")
                     _require(isinstance(current_path, str)
@@ -787,6 +791,23 @@ def verify_snapshot(
                              "History index references absent current-page member")
                     _require(page["currentUrl"] in entries[current_path]["sourceUrls"],
                              "History index current-page URL differs from inventory")
+                    exclusion = page.get("historyExclusion")
+                    if exclusion is not None:
+                        try:
+                            validate_history_exclusion(
+                                page, member=entries[current_path],
+                                site=site, language=language,
+                            )
+                        except ValueError as exc:
+                            raise SnapshotVerificationError(
+                                f"Unverified service history exclusion: {current_path}: {exc}"
+                            ) from exc
+                    else:
+                        _require(
+                            isinstance(page.get("revisions"), list)
+                            and bool(page["revisions"]),
+                            f"Current-page history lacks revisions or approved exclusion: {current_path}",
+                        )
                 if index_version == 2:
                     former_entries = history_index["historicalOnlyPages"]
                     former_paths: set[str] = set()

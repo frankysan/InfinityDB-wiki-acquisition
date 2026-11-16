@@ -169,6 +169,19 @@ def upgrade_snapshot_with_history(
         )
     site = cli.WIKI_SITES[site_key]
     pages = _reusable_parent_pages(parent)
+    from infinity_wiki_acquisition.history_service_exclusion import (
+        approved_parent_service_member,
+    )
+
+    # Only the inherited, source-identified Rules Wiki API service
+    # pseudo-page may be recorded with no revision history. Keep the
+    # complete parent page list/checkpoint identity unchanged on resume.
+    history_exempt_urls = frozenset(
+        member["page"]["url"] for member in parent["members"]
+        if approved_parent_service_member(
+            member, site=site, language=language,
+        )
+    )
     for page in pages:
         if not cli.wiki_page_matches_language(page.url, language, site=site):
             raise ValueError(
@@ -256,6 +269,7 @@ def upgrade_snapshot_with_history(
                     pages, work, site=site, language=language,
                     checkpoint_file=work / HISTORY_CHECKPOINT_FILENAME,
                     progress=progress, reuse_oldid=reuse_oldid,
+                    history_exempt_urls=history_exempt_urls,
                 )
             finally:
                 if hasattr(progress, "finish"):

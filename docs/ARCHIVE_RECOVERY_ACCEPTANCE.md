@@ -26,6 +26,28 @@ conditional reuse of rendered current-page HTML.
    mismatches. Ordinary crawl-only `--retry-failed-only` is **not** valid
    for archive-derived recovery.
 
+**Rules Wiki history API-service exception (2026-11-16):** The
+verified `WIKI-en 20261116-075926` parent includes
+`api.php.html`, derived from the wiki's `/api.php`
+service endpoint rather than a main-namespace page. An archived
+page URL is not, by itself, proof of a revision-list identity.
+The attempted history upgrade preserved `WIKI-en-history
+20261116-081423.work`, with 709/711 completed pages and 2,801
+committed oldid downloads. The read-only
+`python -m tools.inspect_history_resume PARENT.zip PARENT.json
+PARENT.inventory.json --work PRESERVED.work` verifies the exact
+source triple, checkpoint page set, saved oldid files and approved
+service URL without starting any downloads. If and only if MediaWiki
+returns a positive `missing` page result for the exact, verified
+API service URL, resume records that service as a current member
+with no revisions and explicit source-response evidence; all
+other missing/failed revision requests remain blockers.
+The version-1 history-index page entry carries an optional
+`historyExclusion` object, validated against the exact current
+service member, absent page ID, source query and response digest.
+Consumers must not interpret this entry as having a valid oldid,
+or infer that any other member may omit revisions.
+
 History upgrade:
 
 ```powershell

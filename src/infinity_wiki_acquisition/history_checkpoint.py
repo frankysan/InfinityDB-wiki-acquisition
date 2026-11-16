@@ -33,6 +33,7 @@ def read_history_checkpoint(
     site: str,
     language: str,
     pages: list[list[str]],
+    history_exempt_urls: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Validate an existing checkpoint, including every committed revision file."""
     try:
@@ -68,6 +69,13 @@ def read_history_checkpoint(
     ):
         raise ValueError("History checkpoint has inconsistent page progress")
 
+    from infinity_wiki_acquisition import cli
+    from infinity_wiki_acquisition.history_service_exclusion import (
+        NO_HISTORY_API_ENDPOINT,
+        eligible_service_page,
+    )
+
+    site_definition = cli.WIKI_SITES[site]
     referenced_oldids: set[str] = set()
     for i, entry in enumerate(completed):
         if not (
@@ -78,6 +86,29 @@ def read_history_checkpoint(
             and isinstance(entry.get("revisions"), list)
         ):
             raise ValueError("History checkpoint has an invalid completed page")
+        exclusion = entry.get("historyExclusion")
+        if exclusion is not None:
+            page = cli.WikiPage(*pages[i])
+            if (page.url not in history_exempt_urls
+                    or not eligible_service_page(
+                        page, site=site_definition, language=language,
+                    )
+                    or entry["revisions"]
+                    or not isinstance(exclusion, dict)
+                    or set(exclusion) != {"reason", "queryUrl", "responseSha256"}
+                    or exclusion.get("reason") != NO_HISTORY_API_ENDPOINT
+                    or exclusion.get("queryUrl") != cli.revision_query_url(
+                        page.title, language=language, site=site_definition,
+                    )
+                    or not isinstance(exclusion.get("responseSha256"), str)
+                    or len(exclusion["responseSha256"]) != 64
+                    or any(c not in "0123456789abcdef" for c in exclusion["responseSha256"])):
+                raise ValueError("History checkpoint has an unjustified service exclusion")
+        elif not entry["revisions"]:
+            raise ValueError(
+                "History checkpoint has missing or unindexed revisions "
+                "(empty page without approved service exclusion)"
+            )
         for record in entry["revisions"]:
             if not (
                 isinstance(record, dict)
@@ -118,6 +149,27 @@ def read_history_checkpoint(
             and (not enumeration_done or continuation is None)
         ):
             raise ValueError("History checkpoint has invalid revision enumeration progress")
+        exclusion = active.get("historyExclusion")
+        if exclusion is not None and (
+            pages[index][0] not in history_exempt_urls
+            or not eligible_service_page(
+                cli.WikiPage(*pages[index]),
+                site=site_definition, language=language,
+            )
+            or active["revisions"]
+            or not active["enumerationComplete"]
+            or active["downloadIndex"] != 0
+            or not isinstance(exclusion, dict)
+            or set(exclusion) != {"reason", "queryUrl", "responseSha256"}
+            or exclusion.get("reason") != NO_HISTORY_API_ENDPOINT
+            or exclusion.get("queryUrl") != cli.revision_query_url(
+                pages[index][2], language=language, site=site_definition,
+            )
+            or not isinstance(exclusion.get("responseSha256"), str)
+            or len(exclusion["responseSha256"]) != 64
+            or any(c not in "0123456789abcdef" for c in exclusion["responseSha256"])
+        ):
+            raise ValueError("History checkpoint has an invalid active service exclusion")
         if any(str(record[0]) not in saved for record in revisions[:offset]):
             raise ValueError("History checkpoint references uncommitted oldid downloads")
 
@@ -155,6 +207,7 @@ def download_history_checkpointed(
     progress: Any,
     checkpoint_file: Path,
     reuse_oldid: Callable[[Any, str, int, int, str], bytes | None] | None = None,
+    history_exempt_urls: frozenset[str] = frozenset(),
 ) -> Any:
     """Resume revision-list pagination and oldid downloads from private state.
 
@@ -172,6 +225,7 @@ def download_history_checkpointed(
             site=site.key,
             language=language,
             pages=identity,
+            history_exempt_urls=history_exempt_urls,
         )
     else:
         state = {
@@ -255,6 +309,35 @@ def download_history_checkpointed(
                         raise ValueError(
                             f"Conflicting oldid identity across wiki pages: {revision.oldid}"
                         )
+            except cli.MediaWikiMissingHistoryPage as exc:
+                from infinity_wiki_acquisition.history_service_exclusion import (
+                    NO_HISTORY_API_ENDPOINT,
+                    eligible_service_page,
+                )
+
+                if (page.url not in history_exempt_urls
+                        or not eligible_service_page(
+                            page, site=site, language=language,
+                        )
+                        or continuation is not None
+                        or active["revisions"]):
+                    failures.append(
+                        cli.WikiDownloadFailure(
+                            url=exc.request_url,
+                            error=f"{type(exc).__name__}: {exc}",
+                        )
+                    )
+                    return result()
+                active["canonicalTitle"] = page.title
+                active["continuation"] = None
+                active["enumerationComplete"] = True
+                active["historyExclusion"] = {
+                    "reason": NO_HISTORY_API_ENDPOINT,
+                    "queryUrl": exc.request_url,
+                    "responseSha256": exc.response_sha256,
+                }
+                store()
+                break
             except Exception as exc:
                 failures.append(
                     cli.WikiDownloadFailure(
@@ -274,7 +357,9 @@ def download_history_checkpointed(
             active["enumerationComplete"] = next_continuation is None
             store()
 
-        if not active["revisions"] or not active["canonicalTitle"]:
+        excluded = active.get("historyExclusion")
+        if (not active["canonicalTitle"]
+                or (not active["revisions"] and excluded is None)):
             failures.append(
                 cli.WikiDownloadFailure(
                     url=cli.revision_query_url(
@@ -355,6 +440,7 @@ def download_history_checkpointed(
                 "currentUrl": page.url,
                 "revisions": revision_records,
                 "title": active["canonicalTitle"],
+                **({"historyExclusion": excluded} if excluded is not None else {}),
             }
         )
         state["pageIndex"] = index + 1

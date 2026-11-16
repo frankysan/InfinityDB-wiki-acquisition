@@ -429,6 +429,49 @@ additional provenance contracts.
 
 ### Interrupted history upgrade
 
+**Real Rules Wiki recovery (2026-11-16):** A full-history upgrade of
+`WIKI-en 20261116-075926` stopped at the inherited
+`https://infinitythewiki.com/api.php` service endpoint after saving
+2,801 oldids across 709 of 711 archived current pages. That URL is
+an HTTP API service, **not** an ordinary MediaWiki article; the
+revision API explicitly reported the page title missing.
+This is a narrow, documented exception: the original `api.php.html`
+member stays intact in the history ZIP, with a zero-revisions entry
+and an explicit `historyExclusion` reason, exact API query URL and
+response SHA-256. No revision is fabricated. Other missing wiki pages
+or failed revision requests remain fatal.
+
+A read-only check verified the exact parent triple, work receipt,
+page-list identity and all 2,801 checkpointed oldid files. To repeat
+that preflight on your workstation:
+
+```powershell
+python -m tools.inspect_history_resume `
+  "local/data/wiki/WIKI-en 20261116-075926.zip" `
+  "local/data/manifests/snapshots/WIKI-en 20261116-075926.json" `
+  "local/data/manifests/snapshots/inventories/WIKI-en 20261116-075926.inventory.json" `
+  --work "local/work/wiki/WIKI-en-history 20261116-081423.work"
+```
+
+Resume **the same history-upgrade run**; do not delete or migrate the
+preserved work or use ordinary `--retry-failed-only`:
+
+```powershell
+infinity-wiki-snapshot `
+  --from-snapshot "local/data/wiki/WIKI-en 20261116-075926.zip" `
+  --include-history `
+  --resume-work "local/work/wiki/WIKI-en-history 20261116-081423.work"
+```
+
+All completed oldid files remain available for checked reuse; only
+uncommitted in-flight work may repeat. The exact parent ZIP, manifest
+and inventory must remain unchanged. Later fresh/current acquisitions
+ignore the `/api.php` API endpoint as a service URL rather than
+misclassifying it as a wiki page. A history-only upgrade cannot
+retroactively reclassify or discard that inherited source file.
+
+For other interrupted history runs:
+
 ```powershell
 infinity-wiki-snapshot `
   --from-snapshot "path/to/parent.zip" `

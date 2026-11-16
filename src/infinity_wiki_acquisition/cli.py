@@ -174,6 +174,16 @@ LANGUAGE_ACCEPT_HEADERS = {
 ALLOWED_HOSTS = set(DEFAULT_SITE.page_hosts | DEFAULT_SITE.asset_hosts)
 
 
+class MediaWikiMissingHistoryPage(ValueError):
+    """The revision API positively reports no MediaWiki page for this URL."""
+
+    def __init__(self, *, page_url: str, request_url: str,
+                 response: bytes) -> None:
+        super().__init__(f"MediaWiki page not found while reading history: {page_url}")
+        self.request_url = request_url
+        self.response_sha256 = hashlib.sha256(response).hexdigest()
+
+
 class WikiLink(NamedTuple):
     """One link discovered in an included HTML page."""
 
@@ -731,8 +741,12 @@ def fetch_page_revision_batch(
     if not isinstance(page_records, list) or len(page_records) != 1:
         raise ValueError(f"MediaWiki revision response did not identify {page.url}")
     page_record = page_records[0]
-    if not isinstance(page_record, dict) or "missing" in page_record:
-        raise ValueError(f"MediaWiki page not found while reading history: {page.url}")
+    if not isinstance(page_record, dict):
+        raise ValueError(f"Invalid MediaWiki page record while reading history: {page.url}")
+    if "missing" in page_record:
+        raise MediaWikiMissingHistoryPage(
+            page_url=page.url, request_url=url, response=payload,
+        )
     title = page_record.get("title")
     if not isinstance(title, str) or not title:
         raise ValueError(f"MediaWiki revision response has no title for {page.url}")
@@ -889,6 +903,7 @@ def download_wiki_history(
     progress: Callable[[WikiHistoryProgress], None] | None = None,
     checkpoint_file: Path | None = None,
     reuse_oldid: Callable[[WikiPage, str, int, int, str], bytes | None] | None = None,
+    history_exempt_urls: frozenset[str] = frozenset(),
 ) -> WikiHistoryResult:
     """Download rendered oldid revisions, checkpointing when requested."""
     _require_site_language(site, language)
@@ -898,7 +913,7 @@ def download_wiki_history(
         return download_history_checkpointed(
             pages, destination, language=language, site=site,
             progress=progress, checkpoint_file=checkpoint_file,
-            reuse_oldid=reuse_oldid,
+            reuse_oldid=reuse_oldid, history_exempt_urls=history_exempt_urls,
         )
 
     files: set[Path] = set()
@@ -1014,6 +1029,13 @@ def ignored_url_reason(url: str, *, site: WikiSite = DEFAULT_SITE) -> str | None
     folded_path = path.casefold()
     if folded_path == "/favicon.ico":
         return "optional site favicon"
+    if (
+        site.key == INFINITY_WIKI_SITE.key
+        and url.split("?", 1)[0].rstrip("/").casefold() in {
+            endpoint.casefold() for endpoint in site.api_urls.values()
+        }
+    ):
+        return "MediaWiki API service endpoint, not a wiki page"
     if any(folded_path.startswith(prefix.casefold()) for prefix in site.ignored_path_prefixes):
         return "optional site service endpoint"
 
