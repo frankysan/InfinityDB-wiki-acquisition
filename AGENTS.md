@@ -49,6 +49,10 @@ as a pinned contract.
   to each coherent change. Design and run focused checks during implementation.
   Record deferred checks only for a concrete blocker, with exact inputs,
   revision and a resumption trigger; never mark a skipped/unrun check passed.
+- Record potential improvements to code or instructions in
+  [the agent improvement log](docs/AGENT_IMPROVEMENTS.md) when identified.
+  Include evidence and a concrete proposal, update existing matching entries,
+  and keep status current. Recording a suggestion does not authorize extra work.
 - Review the diff for accidental publication of copyrighted assets, source
   downloads, secrets, and private operator evidence. Respect third-party
   rights separately from the MIT source-code license.

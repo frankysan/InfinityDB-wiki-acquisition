@@ -847,6 +847,14 @@ policy, tests for executable invariants, and the changelog for substantial
 operator outcomes. Do not copy InfinityDB's browser, database, release
 gate or internal test queue into this producer.
 
+Agents record potential code and instruction improvements in
+[the agent improvement log](AGENT_IMPROVEMENTS.md) when identified, using its
+entry format and updating matching entries rather than duplicating them.
+Keep observations and hypotheses distinct. The log preserves suggestions for
+later review; `docs/TODO.md` remains the maintained implementation roadmap.
+When a suggestion becomes planned work, link the corresponding roadmap item
+and keep its log status current. Recording it does not authorize implementation.
+
 For a bounded source audit or one-use recovery tool, record its
 owner/question, source revision, input/output hashes and completion
 criterion. Reconcile unresolved findings into maintained documentation;
