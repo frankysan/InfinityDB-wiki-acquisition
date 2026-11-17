@@ -71,6 +71,13 @@ history and the
 
 ### Added
 
+- **Acquisition:** Independently accepted the new English Human Sphere
+  current-content snapshot `HUMAN-SPHERE 20261117-002753`:
+  74,193 verified files (9,660 HTML pages and 64,533 assets),
+  zero unknown members, and successful exact original-HTML replay of
+  all 9,660 pages. The live crawl reported zero failures and 53
+  deliberately ignored optional URLs; the separate history upgrade
+  remains outstanding.
 - **Acquisition:** Added `--source-replay` as a shorthand for enabling
   original-HTML replay companions in `local/data/wiki-source-replay`.
   The existing `--source-replay-dir PATH` remains available for custom

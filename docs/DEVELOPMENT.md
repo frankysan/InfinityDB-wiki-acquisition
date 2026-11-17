@@ -101,6 +101,24 @@ Agents start with [AGENTS.md](../AGENTS.md).
   ignored URL lists and page IDs remain unknown. Earlier manifest formats
   need a separately reviewed migration/verification contract, not inference
   from file extensions or archive naming alone.
+- P3.6f: The fresh English Human Sphere current-content snapshot
+  `HUMAN-SPHERE 20261117-002753` and its v3 provenance and v1
+  inventory passed the full read-only `tools.verify_snapshot_acceptance`
+  verifier, including all ZIP member hashes and original-current-HTML
+  replay from the independently published `source-replay` companion.
+  The artifact has **74,193 members**, of which **9,660** are
+  current pages and **64,533** are assets; **zero unknown members**
+  and **9,660/9,660** exact original-response HTML replay checks.
+  There are 1,407 captured allpages numeric page IDs, plus 8,253
+  current pages without numeric allpages IDs. The successful live crawl
+  reported zero failures and 53 ignored optional URLs. The previous
+  checkpoint-less November 14 work was not used; fresh acquisition
+  retained the producer's original source identity and complete
+  verification gates. A history-only upgrade from this exact verified
+  parent is a separately selected operation and must independently
+  verify its own child and SHA-256 lineage; no assertion of an
+  atomic remote source instant or exhaustiveness follows from the
+  archive's internal checks.
 - P3.5c: The independently verified Spanish current source
   `WIKI-es 20261116-092640` has 930 current pages and 216 assets,
   and its separate original-source replay verified all 930 pages.

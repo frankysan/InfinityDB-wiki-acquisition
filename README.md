@@ -136,6 +136,15 @@ This is optional. It increases storage, does not preserve original HTML for
 historical oldid pages, and does **not** enable conditional HTML download
 skipping.
 
+**Human Sphere acceptance (2026-11-17):** The fresh
+`HUMAN-SPHERE 20261117-002753` current-content archive, its v3
+manifest/v1 inventory and optional source-replay companion passed
+independent offline checks: 74,193 members (9,660 current HTML pages,
+64,533 assets), zero unknown members, and 9,660/9,660 original HTML
+replays. This verifies the published local artifact, not a guaranteed
+atomic live-source instant or a history archive. The subsequent
+history-only upgrade must be accepted separately.
+
 ### B. Upgrade a completed non-history snapshot to include history
 
 If comprehensive Rules Wiki main-namespace history is the goal,
